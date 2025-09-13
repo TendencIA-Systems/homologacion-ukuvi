@@ -1,0 +1,3496 @@
+{
+  "name": "ETL - Insertar y Actualizar",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -960,
+        768
+      ],
+      "id": "16fdd410-94a2-415e-bae0-5c7f50d4e9af",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "const SIZE = 50000;\nconst all = $input.all().map(i => i.json);\nconst out = [];\nfor (let i = 0; i < all.length; i += SIZE) {\n  out.push({ json: { vehiculos_json: all.slice(i, i + SIZE) } });\n}\nreturn out;\n"
+      },
+      "id": "9c1d0049-4c46-4e3c-8bca-daef23cdd99b",
+      "name": "Preparar Datos para Función Maestra",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -672,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://zsyapaddgdrnqfdxxzjw.supabase.co/rest/v1/rpc/procesar_batch_completo",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpzeWFwYWRkZ2RybnFmZHh4emp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzI5MTc5MiwiZXhwIjoyMDY4ODY3NzkyfQ.fxsYfEUkFGOP6dyrSxn2RYymcVWWQFi2te8nuJrIOyo"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpzeWFwYWRkZ2RybnFmZHh4emp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzI5MTc5MiwiZXhwIjoyMDY4ODY3NzkyfQ.fxsYfEUkFGOP6dyrSxn2RYymcVWWQFi2te8nuJrIOyo"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ vehiculos_json: $json.vehiculos_json }) }}",
+        "options": {
+          "batching": {
+            "batch": {}
+          },
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -368,
+        768
+      ],
+      "id": "68a53c5b-92b9-4345-a3a0-d6445ba5c8d2",
+      "name": "Llamar Función Maestra",
+      "notes": "Procesa todo: busca, inserta o actualiza según corresponda"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ====================================\n// CONSOLIDAR RESULTADOS\n// ====================================\n\nconst results = $input.all();\nlet totalInsertados = 0;\nlet totalActualizados = 0;\nlet totalOmitidos = 0;\nlet totalProcesados = 0;\nlet errores = [];\n\n// Procesar respuesta de cada batch\nresults.forEach((result, index) => {\n  const data = result.json;\n  \n  if (data.success === false) {\n    errores.push({\n      batch: index + 1,\n      error: data.error || 'Error desconocido'\n    });\n  } else {\n    totalProcesados += data.total || 0;\n    totalInsertados += data.insertados || 0;\n    totalActualizados += data.actualizados || 0;\n    totalOmitidos += data.omitidos || 0;\n  }\n});\n\n// Generar resumen\nconst resumen = {\n  success: errores.length === 0,\n  timestamp: new Date().toISOString(),\n  aseguradora: results[0]?.json?.aseguradora || 'DESCONOCIDA',\n  totales: {\n    procesados: totalProcesados,\n    insertados: totalInsertados,\n    actualizados: totalActualizados,\n    omitidos: totalOmitidos\n  },\n  eficiencia: {\n    batches_procesados: results.length,\n    llamadas_http: results.length, // Solo 1 llamada por batch\n    tiempo_estimado: `${Math.ceil(results.length * 2)} segundos`\n  }\n};\n\nif (errores.length > 0) {\n  resumen.errores = errores;\n}\n\n// Logs finales\nconsole.log('\\n' + '='.repeat(50));\nconsole.log('✅ PROCESAMIENTO COMPLETADO');\nconsole.log('='.repeat(50));\nconsole.log(`📊 Aseguradora: ${resumen.aseguradora}`);\nconsole.log(`📈 Total Procesados: ${resumen.totales.procesados}`);\nconsole.log(`   ✨ Nuevos insertados: ${resumen.totales.insertados}`);\nconsole.log(`   🔄 Actualizados: ${resumen.totales.actualizados}`);\nconsole.log(`   ⏭️  Omitidos (ya existían): ${resumen.totales.omitidos}`);\nconsole.log(`\\n⚡ Eficiencia:`);\nconsole.log(`   - Batches: ${resumen.eficiencia.batches_procesados}`);\nconsole.log(`   - Llamadas HTTP: ${resumen.eficiencia.llamadas_http} (vs ${totalProcesados * 2} en versión anterior)`);\nconsole.log(`   - Ahorro: ${((1 - (resumen.eficiencia.llamadas_http / (totalProcesados * 2))) * 100).toFixed(2)}%`);\n\nif (errores.length > 0) {\n  console.log(`\\n⚠️ ERRORES DETECTADOS:`);\n  errores.forEach(e => {\n    console.log(`   - Batch ${e.batch}: ${e.error}`);\n  });\n}\n\nreturn [{json: resumen}];"
+      },
+      "id": "c4ffc27d-2814-454c-ab1c-4da18707bb68",
+      "name": "Resumen Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        768
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ====================================\n// NOTIFICACIÓN OPCIONAL\n// ====================================\n\nconst resumen = $json;\n\n// Preparar mensaje de notificación\nlet mensaje = `🚀 ETL Completado - ${resumen.aseguradora}\\n\\n`;\nmensaje += `📊 Resultados:\\n`;\nmensaje += `• Procesados: ${resumen.totales.procesados}\\n`;\nmensaje += `• Nuevos: ${resumen.totales.insertados}\\n`;\nmensaje += `• Actualizados: ${resumen.totales.actualizados}\\n`;\nmensaje += `• Omitidos: ${resumen.totales.omitidos}\\n\\n`;\nmensaje += `⚡ Eficiencia:\\n`;\nmensaje += `• Llamadas HTTP: ${resumen.eficiencia.llamadas_http}\\n`;\nmensaje += `• Tiempo: ${resumen.eficiencia.tiempo_estimado}`;\n\nif (resumen.errores && resumen.errores.length > 0) {\n  mensaje += `\\n\\n⚠️ Se detectaron ${resumen.errores.length} errores`;\n}\n\nreturn [{\n  json: {\n    mensaje: mensaje,\n    resumen: resumen,\n    // Aquí puedes agregar datos para enviar a Slack, email, etc.\n    notificar: resumen.totales.procesados > 0\n  }\n}];"
+      },
+      "id": "421cb1d0-ebe3-4998-922a-c488b0871863",
+      "name": "Preparar Notificación (Opcional)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        768
+      ]
+    }
+  ],
+  "pinData": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "id_canonico": "66b4fe23a96e8de9b1dac624069d9a03f96d3f17d7319673621254cb42c651dc",
+          "hash_comercial": "7cc9374cee0e1c1bc8638521b2690cb010dae9729134790042f19c05346f8d45",
+          "string_comercial": "ACURA|ADX|2025|AUTO",
+          "string_tecnico": "ACURA|ADX|2025|AUTO|ADVANCE|L4|SUV",
+          "marca": "ACURA",
+          "modelo": "ADX",
+          "anio": 2025,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "372340",
+          "version_original": "ADVANCE 5P L4 1.5T AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "5955a60b6849b49cd47478385fa2948dcea4f55e5017493e73c0af58b743fd4d",
+          "hash_comercial": "7cc9374cee0e1c1bc8638521b2690cb010dae9729134790042f19c05346f8d45",
+          "string_comercial": "ACURA|ADX|2025|AUTO",
+          "string_tecnico": "ACURA|ADX|2025|AUTO|A-SPEC|L4|SUV",
+          "marca": "ACURA",
+          "modelo": "ADX",
+          "anio": 2025,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "372341",
+          "version_original": "A-SPEC 5P L4 1.5T AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "1a9f7e360c36281368602d967dd81d3c4bd019482a38b7eb5fe9f084fd641f4a",
+          "hash_comercial": "94f3e654c1cd70c3802c325255cf81359583b829a82d50e8362b477acde22270",
+          "string_comercial": "ACURA|ILX|2013|AUTO",
+          "string_tecnico": "ACURA|ILX|2013|AUTO|PREMIUM|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2013,
+          "transmision": "AUTO",
+          "version": "PREMIUM",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "352480",
+          "version_original": "PREMIUM 4P L4 2.0L SPORTSHIFT AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "91972d536e341a18079095dd0721aba9c82711ee5b572bd0e518f844cd6be4d4",
+          "hash_comercial": "94f3e654c1cd70c3802c325255cf81359583b829a82d50e8362b477acde22270",
+          "string_comercial": "ACURA|ILX|2013|AUTO",
+          "string_tecnico": "ACURA|ILX|2013|AUTO|TECHNOLOGY PACKAGE|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2013,
+          "transmision": "AUTO",
+          "version": "TECHNOLOGY PACKAGE",
+          "motor_config": null,
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "351890",
+          "version_original": "TECHNOLOGY PACKAGE 2.0L SPORTSHIFT AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "642713fef009d066a36764c5150f7bad1d61a5c84246da447f78c7e9678f82cb",
+          "hash_comercial": "90406bb831b34abe1a0aba4e992710fca6ea808b80abc2ca856eb7253dd79198",
+          "string_comercial": "ACURA|ILX|2014|AUTO",
+          "string_tecnico": "ACURA|ILX|2014|AUTO|LUXURY|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2014,
+          "transmision": "AUTO",
+          "version": "LUXURY",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "350713",
+          "version_original": "LUXURY 4P L4 2.0L ABS BA QC AC R16 CAM TRAS AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "a111dc44a5d61eab10f914d8d972ba49d20a6c4a62438333426ea71f7897932f",
+          "hash_comercial": "90406bb831b34abe1a0aba4e992710fca6ea808b80abc2ca856eb7253dd79198",
+          "string_comercial": "ACURA|ILX|2014|AUTO",
+          "string_tecnico": "ACURA|ILX|2014|AUTO|PREMIUM|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2014,
+          "transmision": "AUTO",
+          "version": "PREMIUM",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "353503",
+          "version_original": "PREMIUM 4P L4 2.0L SPORTSHIFT AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "5bbc66ae660211b8bf008de6b836e76f4ee12162e44a8b7a33202c49b4458459",
+          "hash_comercial": "90406bb831b34abe1a0aba4e992710fca6ea808b80abc2ca856eb7253dd79198",
+          "string_comercial": "ACURA|ILX|2014|AUTO",
+          "string_tecnico": "ACURA|ILX|2014|AUTO|TECHNOLOGY PACKAGE|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2014,
+          "transmision": "AUTO",
+          "version": "TECHNOLOGY PACKAGE",
+          "motor_config": null,
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "352820",
+          "version_original": "TECHNOLOGY PACKAGE 2.0L SPORTSHIFT AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "0a41b21a3169db59292d30f084f16ebd2de31adf7f854776b97b24625eb02d1e",
+          "hash_comercial": "3ea8bd61a23ac9fb15a7f0428470b1e15522e917bd48202bf0d89aa786b3dc74",
+          "string_comercial": "ACURA|ILX|2015|AUTO",
+          "string_tecnico": "ACURA|ILX|2015|AUTO|PREMIUM|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2015,
+          "transmision": "AUTO",
+          "version": "PREMIUM",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "354462",
+          "version_original": "PREMIUM 4P L4 2.0L SPORTSHIFT AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "6023977798a759cd56ebd1402c802a8ddc0f816f0f86a6d7304407c9fcf40708",
+          "hash_comercial": "3ea8bd61a23ac9fb15a7f0428470b1e15522e917bd48202bf0d89aa786b3dc74",
+          "string_comercial": "ACURA|ILX|2015|AUTO",
+          "string_tecnico": "ACURA|ILX|2015|AUTO|TECHNOLOGY PACKAGE|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2015,
+          "transmision": "AUTO",
+          "version": "TECHNOLOGY PACKAGE",
+          "motor_config": null,
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "356103",
+          "version_original": "TECHNOLOGY PACKAGE 2.0L SPORTSHIFT AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "95b416368f1ce08ef781e743e6a4b1fe56704a5ec0cec14697e5e6b16ef55b22",
+          "hash_comercial": "be825577936f1ac801bb6d1fd7a6515b4029c0cd21dccba9e0879bfdc63f6f02",
+          "string_comercial": "ACURA|ILX|2016|AUTO",
+          "string_tecnico": "ACURA|ILX|2016|AUTO|A-SPEC|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2016,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "356925",
+          "version_original": "A-SPEC 4P L4 2.0L ABS BA QC AC GPS R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "4e607688049efc447c34bb68c0e1fd40a2fd8b110467f91cf3496675eaca678b",
+          "hash_comercial": "be825577936f1ac801bb6d1fd7a6515b4029c0cd21dccba9e0879bfdc63f6f02",
+          "string_comercial": "ACURA|ILX|2016|AUTO",
+          "string_tecnico": "ACURA|ILX|2016|AUTO|TECH|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2016,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "356926",
+          "version_original": "TECH 4P L4 2.4L AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "41842d1beb1a88d0fd9d2aadbdc33dce00fa9b056e5aa1b530442be8c75d0457",
+          "hash_comercial": "9cbc4c28a84121a7e71267dcf6c81808a8f643b2627c253f6adbae995648384c",
+          "string_comercial": "ACURA|ILX|2017|AUTO",
+          "string_tecnico": "ACURA|ILX|2017|AUTO|A-SPEC|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2017,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "358306",
+          "version_original": "A-SPEC 4P L4 2.4L QC NAVI R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "0dd6d2a0ea2cdcf7c64888f65d7ea37c32408e20a3a76917b32e12037b11e4cf",
+          "hash_comercial": "9cbc4c28a84121a7e71267dcf6c81808a8f643b2627c253f6adbae995648384c",
+          "string_comercial": "ACURA|ILX|2017|AUTO",
+          "string_tecnico": "ACURA|ILX|2017|AUTO|TECH|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2017,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "355627",
+          "version_original": "TECH 4P L4 2.4L AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "6b285fa00194ae77c925f810dc5832765190f0be77be9eb1fc2d99d7ced4ac1d",
+          "hash_comercial": "bb16c28e7679b7495a099d7241dc913620f9b12a3af6195dec77ba3dfc246696",
+          "string_comercial": "ACURA|ILX|2018|AUTO",
+          "string_tecnico": "ACURA|ILX|2018|AUTO|A-SPEC|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2018,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "361215",
+          "version_original": "A-SPEC 4P L4 2.4L QC NAVI R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "38cc9908fce5a7113c2ed52649ef5e039452bcc34e6337496e36946c8fcfb26b",
+          "hash_comercial": "bb16c28e7679b7495a099d7241dc913620f9b12a3af6195dec77ba3dfc246696",
+          "string_comercial": "ACURA|ILX|2018|AUTO",
+          "string_tecnico": "ACURA|ILX|2018|AUTO|TECH|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2018,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "358813",
+          "version_original": "TECH 4P L4 2.4L AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "ddab396801671a78c984c3255d4ebae2ab0a1622714702395362b49b6fcda9dc",
+          "hash_comercial": "3e073c177911c43f293cd7a97366732d31b92eaced5f6e32c3d0e58fe0a5f3c0",
+          "string_comercial": "ACURA|ILX|2019|AUTO",
+          "string_tecnico": "ACURA|ILX|2019|AUTO|A-SPEC|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "359967",
+          "version_original": "A-SPEC 4P L4 2.4L QC NAVI R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "acc26ea4bcb1110de85387bbab131dcf0ece15bd02d60fea08e0202b36289920",
+          "hash_comercial": "3e073c177911c43f293cd7a97366732d31b92eaced5f6e32c3d0e58fe0a5f3c0",
+          "string_comercial": "ACURA|ILX|2019|AUTO",
+          "string_tecnico": "ACURA|ILX|2019|AUTO|TECH|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "359706",
+          "version_original": "TECH 4P L4 2.4L AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "dc9d7073992110352e3387547979198b0e837d833d1db3fabb2b48c11007e9df",
+          "hash_comercial": "bf7ae50a4165d908c4cc01debee85889209eec98271bd5c225deb02ea885cc1a",
+          "string_comercial": "ACURA|ILX|2020|AUTO",
+          "string_tecnico": "ACURA|ILX|2020|AUTO|A-SPEC|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "362947",
+          "version_original": "A-SPEC 4P L4 2.4L QC NAVI R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "161133dbd8c91b1ec6631b51dd9457fec7affe98d0bac1d256af8b4e75282696",
+          "hash_comercial": "bf7ae50a4165d908c4cc01debee85889209eec98271bd5c225deb02ea885cc1a",
+          "string_comercial": "ACURA|ILX|2020|AUTO",
+          "string_tecnico": "ACURA|ILX|2020|AUTO|TECH|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "ILX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "364730",
+          "version_original": "TECH 4P L4 2.4L AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "dd0a664cc8fe033b59b2d084ae1c70c104b06ea85ad03d936df741417a42bcf6",
+          "hash_comercial": "084d1265937e9fb57623c7fcd28aefec449fbab58de9c1731610587d5d527ce2",
+          "string_comercial": "ACURA|INTEGRA|2023|AUTO",
+          "string_tecnico": "ACURA|INTEGRA|2023|AUTO|A-SPEC|L4",
+          "marca": "ACURA",
+          "modelo": "INTEGRA",
+          "anio": 2023,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "367544",
+          "version_original": "A-SPEC 4P L4 1.5T BA ABS AA VP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "8be92c8aca15b53ca665675bf2a37c65581547a8d8de3a64083d178aa681d080",
+          "hash_comercial": "5ee3994c47698aae3bb4088df60ace292951a83fc9ecf49fb396144aade4d67b",
+          "string_comercial": "ACURA|INTEGRA|2024|AUTO",
+          "string_tecnico": "ACURA|INTEGRA|2024|AUTO|A-SPEC|L4",
+          "marca": "ACURA",
+          "modelo": "INTEGRA",
+          "anio": 2024,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "370351",
+          "version_original": "A-SPEC 4P L4 1.5T BA ABS AA VP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "6e82f684ac4d5d953bae99322e3754d5b47f4414ecb5e6969e32240229326e00",
+          "hash_comercial": "786c44123dadf2dfee4f71f88ff855e79645b9b4a734893c87addd3b5f9f5385",
+          "string_comercial": "ACURA|INTEGRA|2024|MANUAL",
+          "string_tecnico": "ACURA|INTEGRA|2024|MANUAL|TYPE S|L4",
+          "marca": "ACURA",
+          "modelo": "INTEGRA",
+          "anio": 2024,
+          "transmision": "MANUAL",
+          "version": "TYPE S",
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "370352",
+          "version_original": "TYPE S 4P L4 2.0T BA ABS STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "2bd150652e78ba5b432f1222ee35b958c0454a1dd1c5e05176fcd2ad4f8834c7",
+          "hash_comercial": "0c070549fae4bde96b05429a25db33671a551d0db9491a7e00809a29a1397840",
+          "string_comercial": "ACURA|INTEGRA|2025|AUTO",
+          "string_tecnico": "ACURA|INTEGRA|2025|AUTO|A-SPEC|L4",
+          "marca": "ACURA",
+          "modelo": "INTEGRA",
+          "anio": 2025,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "371857",
+          "version_original": "A-SPEC 4P L4 1.5T BA ABS AA VP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "2507d122218a7bf9febd89c4cd47d1f06c3ddf4bea2a8c6d8ed10c3ddb9f84d8",
+          "hash_comercial": "519a513f5ed85651ff626a7fafc0f34826b749edf4c5b77064108aff79434862",
+          "string_comercial": "ACURA|INTEGRA|2025|MANUAL",
+          "string_tecnico": "ACURA|INTEGRA|2025|MANUAL|TYPE S|L4",
+          "marca": "ACURA",
+          "modelo": "INTEGRA",
+          "anio": 2025,
+          "transmision": "MANUAL",
+          "version": "TYPE S",
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "371858",
+          "version_original": "TYPE S 4P L4 2.0T BA ABS STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "20af3b8e51c2833a19206a7be859dd8459dc2efbcb4132564ac4037ca0fcd074",
+          "hash_comercial": "be949d482c2285665f4b2a8ec18d3b5ed78ff6b30e80bba16b4c302c16b0c641",
+          "string_comercial": "ACURA|MDX|2005|AUTO",
+          "string_tecnico": "ACURA|MDX|2005|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2005,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "341613",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "bad229c02165810687e8e564e2b57c59fbc289de7e53fe21662a77fc9bf22792",
+          "hash_comercial": "d01da931de5e07139021c6d91fcbfd89a78e675bdf853a521e8dd92597e0062e",
+          "string_comercial": "ACURA|MDX|2006|AUTO",
+          "string_tecnico": "ACURA|MDX|2006|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2006,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "342377",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "d7efac9f14e486996e4c828be25af84a18e8c65d72514507b8de3eabb2deb45c",
+          "hash_comercial": "6f05aab4ed235b472578a390112ebe5dff239cb8e98e4fb2d5e4f897cb81585c",
+          "string_comercial": "ACURA|MDX|2007|AUTO",
+          "string_tecnico": "ACURA|MDX|2007|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2007,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "340707",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "6a01849c97773500d98bd9724c321f89d52c91106d4326b56f63ecf3f7538bf2",
+          "hash_comercial": "f595311e2cdb2958e2afd2868307b55560dc0679be2bff26989617e6e3bc6e2e",
+          "string_comercial": "ACURA|MDX|2008|AUTO",
+          "string_tecnico": "ACURA|MDX|2008|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2008,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "343905",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "ebca4289e41125f222961beb89a570ab13f5026755cc7ae7e49cbc28201391ea",
+          "hash_comercial": "3511bb42b722d8bd0a4a4210ec63dd6a8b67580a6d4735547492b0cbc3217280",
+          "string_comercial": "ACURA|MDX|2009|AUTO",
+          "string_tecnico": "ACURA|MDX|2009|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2009,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "344807",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "cb24c03e212f33266c32284f86cad44e21aaedefe6ab78fc5a54ab4cb23f4270",
+          "hash_comercial": "4bf2f616da37820cd265a78d7c3facd09780d9a3693e6e778b5ed64d572d4963",
+          "string_comercial": "ACURA|MDX|2010|AUTO",
+          "string_tecnico": "ACURA|MDX|2010|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2010,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "347865",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "e0a804b53e0dd554d2a0f3eb4daac34d03d9108602d64b8c05c7a3c8af405566",
+          "hash_comercial": "46f6972ecd5ff4c5706c686f55d638ff66eb5e5d0090ba43b6259fd094ccefca",
+          "string_comercial": "ACURA|MDX|2011|AUTO",
+          "string_tecnico": "ACURA|MDX|2011|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2011,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "346211",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "8830ae931230bd81b323af783116dcb374a40dbc6a72dca2ab9b77abc873ae43",
+          "hash_comercial": "9d47c149a9b85579f2ad38058174d70efb8f39a752352f3197921b23e9f7afee",
+          "string_comercial": "ACURA|MDX|2012|AUTO",
+          "string_tecnico": "ACURA|MDX|2012|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2012,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "351801",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "fcaf512ca8fa2b92801c3bf9d9d7b2d9ba8de9ac5c1e76a6ed212de0283900c7",
+          "hash_comercial": "0fa0fc5b8b4dfa866caffb4dba0b9663ba8f29566db6a8c5569e47861319ed53",
+          "string_comercial": "ACURA|MDX|2013|AUTO",
+          "string_tecnico": "ACURA|MDX|2013|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2013,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "352712",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "2ce3558dd391697903a1b582cc98c55bd33e4319dbc1d19b6d3ca151a2baf7a9",
+          "hash_comercial": "c6d2f06f64ef61eabb23cc6f0386737bcffcb1494b5210ee8f62145fa6cb78e4",
+          "string_comercial": "ACURA|MDX|2014|AUTO",
+          "string_tecnico": "ACURA|MDX|2014|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2014,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "353697",
+          "version_original": "AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "959a1e3401d5af1515974c3e212fa71e4991d9d43c37329a8e6f00ee59cd97fc",
+          "hash_comercial": "c6d2f06f64ef61eabb23cc6f0386737bcffcb1494b5210ee8f62145fa6cb78e4",
+          "string_comercial": "ACURA|MDX|2014|AUTO",
+          "string_tecnico": "ACURA|MDX|2014|AUTO|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2014,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "350714",
+          "version_original": "SH 5P V6 3.5L AWD R19 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "56c4671938940524ed670589a95bf17bc144cc6d4477fd127bf320e5aee6fe9e",
+          "hash_comercial": "c6d2f06f64ef61eabb23cc6f0386737bcffcb1494b5210ee8f62145fa6cb78e4",
+          "string_comercial": "ACURA|MDX|2014|AUTO",
+          "string_tecnico": "ACURA|MDX|2014|AUTO|TECH|V6|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2014,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "350715",
+          "version_original": "TECH 5P V6 3.5L NAVI R19 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "c89c8fda6913099d16b1e5bc3efae162096c401579f3acbfdae0a602fb57f6b7",
+          "hash_comercial": "5eeb360cab4751462c4eadacee642c46ed62dbbd5b0021b763a098a888cd47ad",
+          "string_comercial": "ACURA|MDX|2015|AUTO",
+          "string_tecnico": "ACURA|MDX|2015|AUTO|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2015,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "354111",
+          "version_original": "SH 5P V6 3.5L AWD ABS BA NAVI R20 AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "a6e7b9c3967703b10b39822cf987b5fa4266c7e13071e23e35ee008acb152636",
+          "hash_comercial": "0eb6dcba9490aab7c31f52bfad6a5c5e0a25657c31ceb33d942cddbe40cf7280",
+          "string_comercial": "ACURA|MDX|2016|AUTO",
+          "string_tecnico": "ACURA|MDX|2016|AUTO|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2016,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "357157",
+          "version_original": "SH 5P V6 3.5L AWD ABS BA NAVI R20 AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "4749265a3b7a6cc4d79939eda3fd6c6033704aeb86613d0ccb5c730cb262c305",
+          "hash_comercial": "7f34d14d38ae7d928223528599a0b7bedc39bc3a92252e673ac462ad0f9975ae",
+          "string_comercial": "ACURA|MDX|2017|AUTO",
+          "string_tecnico": "ACURA|MDX|2017|AUTO|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2017,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "358304",
+          "version_original": "SH 5P V6 3.5L AWD ABS BA NAVI R20 AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "5b25f3ccf365a0bd916ff6bcbddd400df127c58e0c5210192b4ceb1b34960f82",
+          "hash_comercial": "abcdf6263827eb17dbc297ef2409165282e98b4ffe51f4d06d2d5cca0e999e67",
+          "string_comercial": "ACURA|MDX|2018|AUTO",
+          "string_tecnico": "ACURA|MDX|2018|AUTO|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2018,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "361213",
+          "version_original": "SH 5P V6 3.5L AWD ABS BA NAVI R20 AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "b300fefc1aac1af85ccab2ece019432995861739d86765011b549bbd20bbfe5b",
+          "hash_comercial": "936c1bae7ddbe4b1dc5f31e79747e38256d26e7d5ea2ba63e0d4def0ec273295",
+          "string_comercial": "ACURA|MDX|2019|AUTO",
+          "string_tecnico": "ACURA|MDX|2019|AUTO|ADVANCE|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "360208",
+          "version_original": "ADVANCE 5P V6 3.5L ABS NAVI QC AC AWD AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "7eaabeb7fe09573288070e482fc1d771740c54203bb1c64976a9beac87b1e188",
+          "hash_comercial": "936c1bae7ddbe4b1dc5f31e79747e38256d26e7d5ea2ba63e0d4def0ec273295",
+          "string_comercial": "ACURA|MDX|2019|AUTO",
+          "string_tecnico": "ACURA|MDX|2019|AUTO|A-SPEC|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "360206",
+          "version_original": "A-SPEC 5P V6 3.5L AWD ABS BA QC AC R20 NAVI AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "cc8b5c32f43512193977e5f95ae1a00db6781a561ffa514656457588c2360aeb",
+          "hash_comercial": "936c1bae7ddbe4b1dc5f31e79747e38256d26e7d5ea2ba63e0d4def0ec273295",
+          "string_comercial": "ACURA|MDX|2019|AUTO",
+          "string_tecnico": "ACURA|MDX|2019|AUTO|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "359964",
+          "version_original": "SH 5P V6 3.5L AWD ABS BA NAVI R20 AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "783947edcfdfc2fec39086478bb8a404d7b93165c203d9abb1b4c9419973240d",
+          "hash_comercial": "936c1bae7ddbe4b1dc5f31e79747e38256d26e7d5ea2ba63e0d4def0ec273295",
+          "string_comercial": "ACURA|MDX|2019|AUTO",
+          "string_tecnico": "ACURA|MDX|2019|AUTO|TECH|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "360205",
+          "version_original": "TECH 5P V6 3.5L AWD ABS BA QC AC R20 NAVI AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "385e8f47c894dcfb50aefbee7ee4f09b090b53179090debe236d517c467be409",
+          "hash_comercial": "bb3525e38a508045f6c68fee3b0eace888693895f08c8a54c49083d7d6d55717",
+          "string_comercial": "ACURA|MDX|2020|AUTO",
+          "string_tecnico": "ACURA|MDX|2020|AUTO|ADVANCE|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "363036",
+          "version_original": "ADVANCE 5P V6 3.5L ABS NAVI QC AC AWD AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "ddc87353cbf284302ce4b28a64c90496aa8d75b87dcc80c8836fb814778e06ff",
+          "hash_comercial": "bb3525e38a508045f6c68fee3b0eace888693895f08c8a54c49083d7d6d55717",
+          "string_comercial": "ACURA|MDX|2020|AUTO",
+          "string_tecnico": "ACURA|MDX|2020|AUTO|A-SPEC|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "363035",
+          "version_original": "A-SPEC 5P V6 3.5L AWD ABS BA QC AC R20 NAVI AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "f3e9f4426a8880d3a7083a10f8e5f5585610fbc5872ec3d937119082c81b4f99",
+          "hash_comercial": "bb3525e38a508045f6c68fee3b0eace888693895f08c8a54c49083d7d6d55717",
+          "string_comercial": "ACURA|MDX|2020|AUTO",
+          "string_tecnico": "ACURA|MDX|2020|AUTO|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "362944",
+          "version_original": "SH 5P V6 3.5L AWD ABS BA NAVI R20 AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "1de22f6e13f2d3b8ba455442da2784eccbf88d773f77a12374f252fc98a4d401",
+          "hash_comercial": "bb3525e38a508045f6c68fee3b0eace888693895f08c8a54c49083d7d6d55717",
+          "string_comercial": "ACURA|MDX|2020|AUTO",
+          "string_tecnico": "ACURA|MDX|2020|AUTO|TECH|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "363034",
+          "version_original": "TECH 5P V6 3.5L AWD ABS BA QC AC R20 NAVI AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "76747ed49dba9974e62825437c3d1f6a0a7566897d6e4f550e944391fcb9426b",
+          "hash_comercial": "b61478eaef801e070df2526e6689bff1df3c4cbb39a2b460499649e3299ed64a",
+          "string_comercial": "ACURA|MDX|2021|AUTO",
+          "string_tecnico": "ACURA|MDX|2021|AUTO|ADVANCE|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2021,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "365948",
+          "version_original": "ADVANCE 5P V6 3.5L ABS NAVI QC AC AWD AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "0dd84a68124e029d281c05c2c2209551b56ebeab8dcbfc86d08db216b8454978",
+          "hash_comercial": "b61478eaef801e070df2526e6689bff1df3c4cbb39a2b460499649e3299ed64a",
+          "string_comercial": "ACURA|MDX|2021|AUTO",
+          "string_tecnico": "ACURA|MDX|2021|AUTO|TECH|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2021,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "365946",
+          "version_original": "TECH 5P V6 3.5L AWD ABS BA QC AC R20 NAVI AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "4d575f19a231ec7c7d01aa2978d05fbd68149c1d37115dae80e2ee8f27dbac31",
+          "hash_comercial": "0fcbb6af469263c220981b345ef1c1cf61dc569c793574c5f751572f337ccc11",
+          "string_comercial": "ACURA|MDX|2022|AUTO",
+          "string_tecnico": "ACURA|MDX|2022|AUTO|ADVANCE|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2022,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "366592",
+          "version_original": "ADVANCE 5P V6 3.5L ABS NAVI QC AC AWD AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "189c27f029c4fffe55fe5c3d80d4894b16ea0e7032f6c2dd3adb849ee7cb77cc",
+          "hash_comercial": "0fcbb6af469263c220981b345ef1c1cf61dc569c793574c5f751572f337ccc11",
+          "string_comercial": "ACURA|MDX|2022|AUTO",
+          "string_tecnico": "ACURA|MDX|2022|AUTO|TECH|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2022,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "366590",
+          "version_original": "TECH 5P V6 3.5L AWD ABS BA QC AC R20 NAVI AUT 7 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "19db38ff2ba5e0d3187898a084293fb0170e278ef81b7be07dcac871bbca405d",
+          "hash_comercial": "0fcbb6af469263c220981b345ef1c1cf61dc569c793574c5f751572f337ccc11",
+          "string_comercial": "ACURA|MDX|2022|AUTO",
+          "string_tecnico": "ACURA|MDX|2022|AUTO|TYPE S|V6|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2022,
+          "transmision": "AUTO",
+          "version": "TYPE S",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "366595",
+          "version_original": "TYPE S 5P V6 3.0T BA ABS AA VP AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "527b6bd1125f4c6716d203f5e1bf86d1ee6c280904b241caa0da5d5ce5980ef3",
+          "hash_comercial": "108019e382a0278c25e99beec113292c4212c039cede2eb38d2394902c67eadf",
+          "string_comercial": "ACURA|MDX|2023|AUTO",
+          "string_tecnico": "ACURA|MDX|2023|AUTO|ADVANCE|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2023,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "367540",
+          "version_original": "ADVANCE 5P V6 3.5L ABS NAVI QC AC AWD AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "049dc727835d2864fd8b427a2cbb1350d0762bdfb4b433a40613d6e4fea6a587",
+          "hash_comercial": "108019e382a0278c25e99beec113292c4212c039cede2eb38d2394902c67eadf",
+          "string_comercial": "ACURA|MDX|2023|AUTO",
+          "string_tecnico": "ACURA|MDX|2023|AUTO|TYPE S|V6|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2023,
+          "transmision": "AUTO",
+          "version": "TYPE S",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "367543",
+          "version_original": "TYPE S 5P V6 3.0T BA ABS AA VP AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "d84c3affe8c1f17644441fc96a3ebcff06df17245423d3333a7dd96a91071812",
+          "hash_comercial": "26b33a1caeb87ab5002e476cc34c9633d1815836c956f3bf3697b714ddcf292c",
+          "string_comercial": "ACURA|MDX|2024|AUTO",
+          "string_tecnico": "ACURA|MDX|2024|AUTO|ADVANCE|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2024,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "370347",
+          "version_original": "ADVANCE 5P V6 3.5L ABS NAVI QC AC AWD AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "fd135e4e9d2d88f5714fcb18899ee6834a33a7d2752fca1d01d93ef5a5de2d2c",
+          "hash_comercial": "26b33a1caeb87ab5002e476cc34c9633d1815836c956f3bf3697b714ddcf292c",
+          "string_comercial": "ACURA|MDX|2024|AUTO",
+          "string_tecnico": "ACURA|MDX|2024|AUTO|TYPE S|V6|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2024,
+          "transmision": "AUTO",
+          "version": "TYPE S",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "370350",
+          "version_original": "TYPE S 5P V6 3.0T BA ABS AA VP AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "2e03688e3ecc22aae1de8732682c4651fade17e50468bc97257c8bbc3bd5ab78",
+          "hash_comercial": "ee5ee6ac0b1bdc02d74d6976804c8e603d1e226832e3e036213b62100b37942d",
+          "string_comercial": "ACURA|MDX|2025|AUTO",
+          "string_tecnico": "ACURA|MDX|2025|AUTO|ADVANCE|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2025,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "371856",
+          "version_original": "ADVANCE 5P V6 3.5L ABS NAVI QC AC AWD AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "b8e3acdbe498e9683ee5d4a824d0b639d80e54eae00c37a37f25be9f1dd4b681",
+          "hash_comercial": "ee5ee6ac0b1bdc02d74d6976804c8e603d1e226832e3e036213b62100b37942d",
+          "string_comercial": "ACURA|MDX|2025|AUTO",
+          "string_tecnico": "ACURA|MDX|2025|AUTO|TYPE S|V6|SUV",
+          "marca": "ACURA",
+          "modelo": "MDX",
+          "anio": 2025,
+          "transmision": "AUTO",
+          "version": "TYPE S",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "371865",
+          "version_original": "TYPE S 5P V6 3.0T BA ABS AA VP AUT., 07 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "5c4780c64fcd0fc39bd5cffa3202a21fd7f2d1735fd1a4133c611e42447944ce",
+          "hash_comercial": "9b580a92475f183cd25f0a942643e2b839a1c8696a5ce5731aec9b90fd45c40d",
+          "string_comercial": "ACURA|NSX|2017|AUTO",
+          "string_tecnico": "ACURA|NSX|2017|AUTO|V6|AWD",
+          "marca": "ACURA",
+          "modelo": "NSX",
+          "anio": 2017,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "358305",
+          "version_original": "HIBRIDO 2P V6 3.5L AWD AUT 2 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "89a762c2ff2a3da3b082f550278e0498879216a395882cfdf12ff7f7ff8dd7e0",
+          "hash_comercial": "870cfab985c66aae093bec9769ed0d940f6bb75a0519ccb10a80a24d05b63804",
+          "string_comercial": "ACURA|NSX|2018|AUTO",
+          "string_tecnico": "ACURA|NSX|2018|AUTO|V6|AWD",
+          "marca": "ACURA",
+          "modelo": "NSX",
+          "anio": 2018,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "361214",
+          "version_original": "HIBRIDO 2P V6 3.5L AWD AUT 2 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "b700cde22e5d48fd20637b989bb0ddd7c4d32a0e49d8ea2060fd18cf2cecffe0",
+          "hash_comercial": "2772db78ccfb9b3fedb0f5f8f99265fffa67f1b11b17078b32d42699b290b9f7",
+          "string_comercial": "ACURA|NSX|2019|AUTO",
+          "string_tecnico": "ACURA|NSX|2019|AUTO|EXCLUSIVE|V6|AWD",
+          "marca": "ACURA",
+          "modelo": "NSX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "EXCLUSIVE",
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "359966",
+          "version_original": "EXCLUSIVE HIBRIDO 2P V6 3.5L TURBO AWD AUT 2 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "70d2bad07e6baa5eadf98a560795f7501ed95ec5486c1f8b7b0e0497acb070b9",
+          "hash_comercial": "2772db78ccfb9b3fedb0f5f8f99265fffa67f1b11b17078b32d42699b290b9f7",
+          "string_comercial": "ACURA|NSX|2019|AUTO",
+          "string_tecnico": "ACURA|NSX|2019|AUTO|V6|AWD",
+          "marca": "ACURA",
+          "modelo": "NSX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "359965",
+          "version_original": "HIBRIDO 2P V6 3.5L AWD AUT 2 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "f3bb3a4ae6bc1111542fb02194f68501f8fb5032b00732f0e31062efe7f0afac",
+          "hash_comercial": "a4a59ed585bd21953b59c6fc607f9471af4bf31ef07dd8ba54ebb4652bd9af70",
+          "string_comercial": "ACURA|NSX|2020|AUTO",
+          "string_tecnico": "ACURA|NSX|2020|AUTO|EXCLUSIVE|V6|AWD",
+          "marca": "ACURA",
+          "modelo": "NSX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": "EXCLUSIVE",
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "362946",
+          "version_original": "EXCLUSIVE HIBRIDO 2P V6 3.5L TURBO AWD AUT 2 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "337ff74aa332369427ecc8c9b802190d8a1e7ca18678f39bc1d7c297b95c5b2a",
+          "hash_comercial": "a4a59ed585bd21953b59c6fc607f9471af4bf31ef07dd8ba54ebb4652bd9af70",
+          "string_comercial": "ACURA|NSX|2020|AUTO",
+          "string_tecnico": "ACURA|NSX|2020|AUTO|V6|AWD",
+          "marca": "ACURA",
+          "modelo": "NSX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "362945",
+          "version_original": "HIBRIDO 2P V6 3.5L AWD AUT 2 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "9c890765933558715eab26d4542f0c704661b1685ff2b0d11c390bee53041c39",
+          "hash_comercial": "9fe0a297a2531f00ec865ec32223ba7a4fbf5975fb7ab5eb8a45ad73dd72f8fe",
+          "string_comercial": "ACURA|RDX|2007|AUTO",
+          "string_tecnico": "ACURA|RDX|2007|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2007,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "340701",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "4c905a1b60a7be731d06f98210e28ab8a62b2f09bfc850c414b65865fd0484ce",
+          "hash_comercial": "db966dcb480486cfd4ab3646978030cdd400db1de0fd47aee0d530ef6f53633d",
+          "string_comercial": "ACURA|RDX|2008|AUTO",
+          "string_tecnico": "ACURA|RDX|2008|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2008,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "343899",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "2d823cf978da768407eda8461b27f8c21733bcd1fbc68f8beed6bdc45ee86ea6",
+          "hash_comercial": "e99f531b660ca5d9b4cf608336bb7ddad88334da66f00c225ee5b679019ab4ce",
+          "string_comercial": "ACURA|RDX|2009|AUTO",
+          "string_tecnico": "ACURA|RDX|2009|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2009,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "344802",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "424c062934ac5f3ca4b17d24c8a231e8f2a8efd31a24a15d2aec8116533788fd",
+          "hash_comercial": "a70a397949ea4bb9f6c860cb183168a988bc963ba1c6ee27304e7818f9e99770",
+          "string_comercial": "ACURA|RDX|2010|AUTO",
+          "string_tecnico": "ACURA|RDX|2010|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2010,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "347860",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "731ed2cd8584d5a3359d235d695d047c915e2c6bf53c3cbfa460587fca67bf46",
+          "hash_comercial": "f33014b35773b9038d854d1c7dc4d5ff8daf3b19a252e4a0da13338ef6416060",
+          "string_comercial": "ACURA|RDX|2011|AUTO",
+          "string_tecnico": "ACURA|RDX|2011|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2011,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "346206",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "dafa160fbdc0327edd86f628009173f22d90e6a66782ae1436e240679c15c992",
+          "hash_comercial": "020f6d1c37803d6bf7af047440f482303713c07a0a4bb26cc032aeb70f8f5002",
+          "string_comercial": "ACURA|RDX|2012|AUTO",
+          "string_tecnico": "ACURA|RDX|2012|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2012,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "351797",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "1386b11b5ebc0c78a7f7ad33acf901d29065c39002ccab983aac3e4f55a6f3df",
+          "hash_comercial": "85a2b1dec6deea1da2f6d5068fc53ffbd21f36de8f2a419ee92b374a73bc80b8",
+          "string_comercial": "ACURA|RDX|2013|AUTO",
+          "string_tecnico": "ACURA|RDX|2013|AUTO|V6|SUV|4X4",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2013,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "4X4",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "352481",
+          "version_original": "5P V6 3.5L 4X4 QC R18 SPORTSHIFT 5 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "402c5306c80c61acf34485ab6e39bc01e07d3ba9eb22de09fdd2c0176fc6de1d",
+          "hash_comercial": "85a2b1dec6deea1da2f6d5068fc53ffbd21f36de8f2a419ee92b374a73bc80b8",
+          "string_comercial": "ACURA|RDX|2013|AUTO",
+          "string_tecnico": "ACURA|RDX|2013|AUTO|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2013,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "352708",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "20e823a2fa8e43c24125711928c8b2b1cd43c3cd2dbb2a7dc58a858df49a92c5",
+          "hash_comercial": "d1fedc33b7bfa193af1f36621490627c0a71062c2ac4d7c6a15775e6fb90b2cf",
+          "string_comercial": "ACURA|RDX|2014|AUTO",
+          "string_tecnico": "ACURA|RDX|2014|AUTO|V6|SUV|4X4",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2014,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "4X4",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "353504",
+          "version_original": "5P V6 3.5L 4X4 QC R18 SPORTSHIFT 5 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "5d6b461ae8d45ec202b6bbabe328dd9a76e6a133b6fbb4b1334cc3a15c32232e",
+          "hash_comercial": "d4ec272fd384b1abbbd212525cd910fd3afbf56c927fa858b928c58ad385a2f0",
+          "string_comercial": "ACURA|RDX|2015|AUTO",
+          "string_tecnico": "ACURA|RDX|2015|AUTO|V6|SUV|4X4",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2015,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "4X4",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "354463",
+          "version_original": "5P V6 3.5L 4X4 QC R18 SPORTSHIFT 5 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "9b92cf61f02bd5e986541beaa8d2e721fb39fc16ce308a35774acac9c1e28147",
+          "hash_comercial": "e073569168b916899c10424b148edc706d235ac7507a915dbf0049c405794cb5",
+          "string_comercial": "ACURA|RDX|2016|AUTO",
+          "string_tecnico": "ACURA|RDX|2016|AUTO|V6|SUV|4X4",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2016,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "4X4",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "355401",
+          "version_original": "5P V6 3.5L 4X4 QC R18 SPORTSHIFT 5 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "776de3449f118cd62fbecf7a81b442b2dddae3ed84327709af07f9a283d62409",
+          "hash_comercial": "27d49b2800853b86e649fb41d526413f9aeb40117806ebb14e6e69670d70d853",
+          "string_comercial": "ACURA|RDX|2017|AUTO",
+          "string_tecnico": "ACURA|RDX|2017|AUTO|V6|SUV|4X4",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2017,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "4X4",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "360631",
+          "version_original": "5P V6 3.5L 4X4 QC R18 SPORTSHIFT 5 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "24b1562b5060d4de35da1792c686a1067d434b7cb05dae0b459be48cdd7a02a9",
+          "hash_comercial": "27d49b2800853b86e649fb41d526413f9aeb40117806ebb14e6e69670d70d853",
+          "string_comercial": "ACURA|RDX|2017|AUTO",
+          "string_tecnico": "ACURA|RDX|2017|AUTO|SPORT|V6|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2017,
+          "transmision": "AUTO",
+          "version": "SPORT",
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "355628",
+          "version_original": "SPORT 5P V6 3.5L AWD VP QC R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "ed51ba58708f7d88f315fbdb9750a245d5651c5912e98cc2c8b414b0a2df9205",
+          "hash_comercial": "412d059e88760dbe98fa8a90bd0b524e5b48ba5cf81dc5537a42c7c47e988414",
+          "string_comercial": "ACURA|RDX|2018|AUTO",
+          "string_tecnico": "ACURA|RDX|2018|AUTO|V6|SUV|4X4",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2018,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "4X4",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "359447",
+          "version_original": "5P V6 3.5L 4X4 QC R18 SPORTSHIFT 5 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "1fc06d6d1875777ddbc11277043bf22857e622a3f1c22234c736926a4225fcb3",
+          "hash_comercial": "5ae7300235d27f5581cc08ee981b33f2f3a7690f0b309d6fa8e3e7180559e32f",
+          "string_comercial": "ACURA|RDX|2019|AUTO",
+          "string_tecnico": "ACURA|RDX|2019|AUTO|A-SPEC|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "360204",
+          "version_original": "A-SPEC 5P L4 2.0T TBO AWD ABS BA QC AC R20 NAVI AUT OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "2ebe422e07b113cfe89ccb4dd4105dc4b45ccd988fce191637e5ed52bffbb26f",
+          "hash_comercial": "5ae7300235d27f5581cc08ee981b33f2f3a7690f0b309d6fa8e3e7180559e32f",
+          "string_comercial": "ACURA|RDX|2019|AUTO",
+          "string_tecnico": "ACURA|RDX|2019|AUTO|TECH|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "360203",
+          "version_original": "TECH 5P L4 2.0T TBO AWD ABS BA QC AC R19 NAVI AUT 5 OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "5f955989459f1ce1653ca79e600ffba9f636e6e3fa23d155e36785f5d42dff00",
+          "hash_comercial": "4dc75e8ca1eaa8f4f1f05604b7c3c1425d23b41a0f76e6bfb7cabaca376e25e4",
+          "string_comercial": "ACURA|RDX|2020|AUTO",
+          "string_tecnico": "ACURA|RDX|2020|AUTO|V6|SUV|4X4",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": "4X4",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "365103",
+          "version_original": "5P V6 3.5L 4X4 QC R18 SPORTSHIFT 5 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "b8db69f9b12bece607c204b913588ba689eb21d680336c31f3e29f5490088baa",
+          "hash_comercial": "4dc75e8ca1eaa8f4f1f05604b7c3c1425d23b41a0f76e6bfb7cabaca376e25e4",
+          "string_comercial": "ACURA|RDX|2020|AUTO",
+          "string_tecnico": "ACURA|RDX|2020|AUTO|A-SPEC|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "363033",
+          "version_original": "A-SPEC 5P L4 2.0T TBO AWD ABS BA QC AC R20 NAVI AUT OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "0fecda4b1773cc9049a643e35ebd62638ffaad2ae54139333a6fad711a44b497",
+          "hash_comercial": "4dc75e8ca1eaa8f4f1f05604b7c3c1425d23b41a0f76e6bfb7cabaca376e25e4",
+          "string_comercial": "ACURA|RDX|2020|AUTO",
+          "string_tecnico": "ACURA|RDX|2020|AUTO|TECH|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "363032",
+          "version_original": "TECH 5P L4 2.0T TBO AWD ABS BA QC AC R19 NAVI AUT 5 OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "d04a9bab711bec54c649391b2c4f44e7d9b5bdd58155d5785b7133f773b460f2",
+          "hash_comercial": "ccbf3f78fc37fd085729a1f09d5870fdb6b8b8f7a1e206acc1e5c88dcbc652ff",
+          "string_comercial": "ACURA|RDX|2021|AUTO",
+          "string_tecnico": "ACURA|RDX|2021|AUTO|A-SPEC|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2021,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "365945",
+          "version_original": "A-SPEC 5P L4 2.0T TBO AWD ABS BA QC AC R20 NAVI AUT OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "8091439b8ba675a7611f6b3c7b250e3f5df06d1dc6198f31ba62d9b3fbd3fb86",
+          "hash_comercial": "ccbf3f78fc37fd085729a1f09d5870fdb6b8b8f7a1e206acc1e5c88dcbc652ff",
+          "string_comercial": "ACURA|RDX|2021|AUTO",
+          "string_tecnico": "ACURA|RDX|2021|AUTO|TECH|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2021,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "365944",
+          "version_original": "TECH 5P L4 2.0T TBO AWD ABS BA QC AC R19 NAVI AUT 5 OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "1f26d3d148e68d3d5dd0a082a6bdc0967b9b6ab973e0de5c75a0c2d1e1c97545",
+          "hash_comercial": "5513f9eaa078b9deba2488f98033bf0a9b8a32eb3f9dfbdc5a0fa41427cc751d",
+          "string_comercial": "ACURA|RDX|2022|AUTO",
+          "string_tecnico": "ACURA|RDX|2022|AUTO|ADVANCE|L4|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2022,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "366593",
+          "version_original": "ADVANCE 5P L4 2.0T BA ABS AA AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "8528e31d79081628bdd34613d8b4468b4d0efc0b393bb5a92dcf4f70a6fcd483",
+          "hash_comercial": "5513f9eaa078b9deba2488f98033bf0a9b8a32eb3f9dfbdc5a0fa41427cc751d",
+          "string_comercial": "ACURA|RDX|2022|AUTO",
+          "string_tecnico": "ACURA|RDX|2022|AUTO|A-SPEC|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2022,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "366589",
+          "version_original": "A-SPEC 5P L4 2.0T TBO AWD ABS BA QC AC R20 NAVI AUT OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "33894b0eef10e85654a82c5eec93102e1954815ff52e647c36d08c54ef6b3fdf",
+          "hash_comercial": "d8a308394531a6249e2f29f5f36da37bcbe26a788372418f8bf200a4582ef878",
+          "string_comercial": "ACURA|RDX|2023|AUTO",
+          "string_tecnico": "ACURA|RDX|2023|AUTO|ADVANCE|L4|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2023,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "367541",
+          "version_original": "ADVANCE 5P L4 2.0T BA ABS AA AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "725d3a6e1a146880582e231ba185cb903c5a4fc728a8c93a133788342a264b26",
+          "hash_comercial": "d8a308394531a6249e2f29f5f36da37bcbe26a788372418f8bf200a4582ef878",
+          "string_comercial": "ACURA|RDX|2023|AUTO",
+          "string_tecnico": "ACURA|RDX|2023|AUTO|A-SPEC|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2023,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "367538",
+          "version_original": "A-SPEC 5P L4 2.0T TBO AWD ABS BA QC AC R20 NAVI AUT OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "e8990a7a039382f838d6a2432da5557dfd4ce5db744cbeae31777d8d3c8a6ffe",
+          "hash_comercial": "89b311511349ca0a73996924e0a73830b3b34a26d9cd23d7a1ad2b7e9ac311ac",
+          "string_comercial": "ACURA|RDX|2024|AUTO",
+          "string_tecnico": "ACURA|RDX|2024|AUTO|ADVANCE|L4|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2024,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "370348",
+          "version_original": "ADVANCE 5P L4 2.0T BA ABS AA AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "ff164994e70895a448dd52aef7de08494fade0e3be4ea1a4bc734fbbd8220966",
+          "hash_comercial": "89b311511349ca0a73996924e0a73830b3b34a26d9cd23d7a1ad2b7e9ac311ac",
+          "string_comercial": "ACURA|RDX|2024|AUTO",
+          "string_tecnico": "ACURA|RDX|2024|AUTO|A-SPEC|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2024,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "370345",
+          "version_original": "A-SPEC 5P L4 2.0T TBO AWD ABS BA QC AC R20 NAVI AUT OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "15a0e5afe1f2b9c45c626d63009d9dcf5e64d6230981e0bc43541e412401df8a",
+          "hash_comercial": "d99e8892fcfe921c73836b09ac5c70ce139ac0c26bc08ce58f5347bea1659c77",
+          "string_comercial": "ACURA|RDX|2025|AUTO",
+          "string_tecnico": "ACURA|RDX|2025|AUTO|ADVANCE|L4|SUV",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2025,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "372339",
+          "version_original": "ADVANCE 5P L4 2.0T BA ABS AA AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "ca54a9bec5c27bbda2d4439a9aab41223372e0193821c9e19292c24ee4c9f195",
+          "hash_comercial": "d99e8892fcfe921c73836b09ac5c70ce139ac0c26bc08ce58f5347bea1659c77",
+          "string_comercial": "ACURA|RDX|2025|AUTO",
+          "string_tecnico": "ACURA|RDX|2025|AUTO|A-SPEC|L4|SUV|AWD",
+          "marca": "ACURA",
+          "modelo": "RDX",
+          "anio": 2025,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "L4",
+          "carroceria": "SUV",
+          "traccion": "AWD",
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "371855",
+          "version_original": "A-SPEC 5P L4 2.0T TBO AWD ABS BA QC AC R20 NAVI AUT OC",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "0762cd04befbeb79e144ebbc9491b309b4ac6b9360e04440e180eb5bd98fa97e",
+          "hash_comercial": "0762cd04befbeb79e144ebbc9491b309b4ac6b9360e04440e180eb5bd98fa97e",
+          "string_comercial": "ACURA|RL|2005|AUTO",
+          "string_tecnico": "ACURA|RL|2005|AUTO",
+          "marca": "ACURA",
+          "modelo": "RL",
+          "anio": 2005,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "341612",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "dee5c88c5487d67b4ce9bdbab5f5ab94f3120d129f3614991c99e125491966f0",
+          "hash_comercial": "dee5c88c5487d67b4ce9bdbab5f5ab94f3120d129f3614991c99e125491966f0",
+          "string_comercial": "ACURA|RL|2006|AUTO",
+          "string_tecnico": "ACURA|RL|2006|AUTO",
+          "marca": "ACURA",
+          "modelo": "RL",
+          "anio": 2006,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "342376",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "fd488f6796576dc11739c3e21104f7fbece812f91cd9fc2e768911065cf69c17",
+          "hash_comercial": "fd488f6796576dc11739c3e21104f7fbece812f91cd9fc2e768911065cf69c17",
+          "string_comercial": "ACURA|RL|2007|AUTO",
+          "string_tecnico": "ACURA|RL|2007|AUTO",
+          "marca": "ACURA",
+          "modelo": "RL",
+          "anio": 2007,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "340706",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "effc88e5a4a9d39a1744326a939e1fab3075c45cf0884b1008eb947462484e4f",
+          "hash_comercial": "effc88e5a4a9d39a1744326a939e1fab3075c45cf0884b1008eb947462484e4f",
+          "string_comercial": "ACURA|RL|2008|AUTO",
+          "string_tecnico": "ACURA|RL|2008|AUTO",
+          "marca": "ACURA",
+          "modelo": "RL",
+          "anio": 2008,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "343904",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "1fbdb84a3fc4b40c8247084761360794a145e30a9085ed8328efc0cff84c9635",
+          "hash_comercial": "1fbdb84a3fc4b40c8247084761360794a145e30a9085ed8328efc0cff84c9635",
+          "string_comercial": "ACURA|RL|2009|AUTO",
+          "string_tecnico": "ACURA|RL|2009|AUTO",
+          "marca": "ACURA",
+          "modelo": "RL",
+          "anio": 2009,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "344806",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "969296924957edc78783352eade1109dacfd3150a31e1e7d8152f7c960f5168d",
+          "hash_comercial": "969296924957edc78783352eade1109dacfd3150a31e1e7d8152f7c960f5168d",
+          "string_comercial": "ACURA|RL|2010|AUTO",
+          "string_tecnico": "ACURA|RL|2010|AUTO",
+          "marca": "ACURA",
+          "modelo": "RL",
+          "anio": 2010,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "347864",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "0f858a057713a65258ba00d7267464a701be7bcfa9555151f10ae55b1dbf83b6",
+          "hash_comercial": "0f858a057713a65258ba00d7267464a701be7bcfa9555151f10ae55b1dbf83b6",
+          "string_comercial": "ACURA|RL|2011|AUTO",
+          "string_tecnico": "ACURA|RL|2011|AUTO",
+          "marca": "ACURA",
+          "modelo": "RL",
+          "anio": 2011,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "346210",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "875cb5556eb4e6629eed6a1e518c007cf4e208862f52966e8e02d02128b18cc2",
+          "hash_comercial": "332b96c50abe9d9b04fa92c3dffb2b071023ad2aea52d82e3cd9862a9b19e5db",
+          "string_comercial": "ACURA|RLX|2014|AUTO",
+          "string_tecnico": "ACURA|RLX|2014|AUTO|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "RLX",
+          "anio": 2014,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "350564",
+          "version_original": "4P V6 3.5L SPORTSHIFT AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "63b700a85209a39fcb75fbee160bdd62f0edc77c35d389a0c2b4a27938b7e6e8",
+          "hash_comercial": "609f76e6eeaa0722de2a23cb1b62d1c18ead3a91869420b5a1393faac54d5a57",
+          "string_comercial": "ACURA|RLX|2015|AUTO",
+          "string_tecnico": "ACURA|RLX|2015|AUTO|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "RLX",
+          "anio": 2015,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "355935",
+          "version_original": "4P V6 3.5L SPORTSHIFT AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "60e37e985b2de013d2eeaaa347721ec94125e4afb3f39d4e278201e15fc823f5",
+          "hash_comercial": "60e37e985b2de013d2eeaaa347721ec94125e4afb3f39d4e278201e15fc823f5",
+          "string_comercial": "ACURA|TL|2005|AUTO",
+          "string_tecnico": "ACURA|TL|2005|AUTO",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2005,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "341611",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "536916284615c98c5f18de4f7240a679b3fbaf8fd87c1d00ada7af89f4d71179",
+          "hash_comercial": "536916284615c98c5f18de4f7240a679b3fbaf8fd87c1d00ada7af89f4d71179",
+          "string_comercial": "ACURA|TL|2006|AUTO",
+          "string_tecnico": "ACURA|TL|2006|AUTO",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2006,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "342375",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "c9dec73de8ac10d34be4aca8ed178b4434c934902e075134e7639aeb4c76b325",
+          "hash_comercial": "c9dec73de8ac10d34be4aca8ed178b4434c934902e075134e7639aeb4c76b325",
+          "string_comercial": "ACURA|TL|2007|AUTO",
+          "string_tecnico": "ACURA|TL|2007|AUTO",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2007,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "340705",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "b17e69b4eb7429d7bf781d05938d794bb9fd45b8cc0f90a74a752aed20b912c8",
+          "hash_comercial": "b17e69b4eb7429d7bf781d05938d794bb9fd45b8cc0f90a74a752aed20b912c8",
+          "string_comercial": "ACURA|TL|2008|AUTO",
+          "string_tecnico": "ACURA|TL|2008|AUTO",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2008,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "343903",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "a1bfee6eaee1ad7e541ea61dd35581ee62692c2f0e1391e88754a714c49387e9",
+          "hash_comercial": "a1bfee6eaee1ad7e541ea61dd35581ee62692c2f0e1391e88754a714c49387e9",
+          "string_comercial": "ACURA|TL|2009|AUTO",
+          "string_tecnico": "ACURA|TL|2009|AUTO",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2009,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "344805",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "e9bf5c341887a21b022b6787ce7a46784ea06696f725038e65ff46163fca9384",
+          "hash_comercial": "a1bfee6eaee1ad7e541ea61dd35581ee62692c2f0e1391e88754a714c49387e9",
+          "string_comercial": "ACURA|TL|2009|AUTO",
+          "string_tecnico": "ACURA|TL|2009|AUTO|V6",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2009,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "344578",
+          "version_original": "V6 3.7L SPORTSHIFT R-18 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "cc5be1858e96a169f26fe68491d81961f7508b2e887d3569c8a89d0044497ac5",
+          "hash_comercial": "cc5be1858e96a169f26fe68491d81961f7508b2e887d3569c8a89d0044497ac5",
+          "string_comercial": "ACURA|TL|2010|AUTO",
+          "string_tecnico": "ACURA|TL|2010|AUTO",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2010,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "347863",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "76ea1a2acea51ce99899b98e496e7c456d0fccfae0cb5899bd313b866790c0f6",
+          "hash_comercial": "cc5be1858e96a169f26fe68491d81961f7508b2e887d3569c8a89d0044497ac5",
+          "string_comercial": "ACURA|TL|2010|AUTO",
+          "string_tecnico": "ACURA|TL|2010|AUTO|V6",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2010,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "345437",
+          "version_original": "V6 3.7L SPORTSHIFT R-18 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "c01c2d2c034673f9da476b63058c0b6c037563c6965c919862d98ec0750c1e8d",
+          "hash_comercial": "c01c2d2c034673f9da476b63058c0b6c037563c6965c919862d98ec0750c1e8d",
+          "string_comercial": "ACURA|TL|2011|AUTO",
+          "string_tecnico": "ACURA|TL|2011|AUTO",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2011,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "346209",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "335fc63ca973bd8be477fd4b88e143d4ab8fd7a5694a16c29496941ec72ca2a5",
+          "hash_comercial": "c01c2d2c034673f9da476b63058c0b6c037563c6965c919862d98ec0750c1e8d",
+          "string_comercial": "ACURA|TL|2011|AUTO",
+          "string_tecnico": "ACURA|TL|2011|AUTO|V6",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2011,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "348496",
+          "version_original": "V6 3.7L SPORTSHIFT R-18 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "b45258af54ebb8501aa91ab7d01323e7349e52a1fa5c5e0402f63d395a2eefbb",
+          "hash_comercial": "b45258af54ebb8501aa91ab7d01323e7349e52a1fa5c5e0402f63d395a2eefbb",
+          "string_comercial": "ACURA|TL|2012|AUTO",
+          "string_tecnico": "ACURA|TL|2012|AUTO",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2012,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "351800",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "d9c47df466131e4841f9ef72783035d4fc0dbb4cfeaa22c222640c7b8051dd71",
+          "hash_comercial": "b45258af54ebb8501aa91ab7d01323e7349e52a1fa5c5e0402f63d395a2eefbb",
+          "string_comercial": "ACURA|TL|2012|AUTO",
+          "string_tecnico": "ACURA|TL|2012|AUTO|V6",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2012,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "351570",
+          "version_original": "V6 3.7L SPORTSHIFT R-18 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "4fc2e2e8e370ec8dfbf8f89801b3b4aac2c6faae806de2b7aeb784dbed592474",
+          "hash_comercial": "4fc2e2e8e370ec8dfbf8f89801b3b4aac2c6faae806de2b7aeb784dbed592474",
+          "string_comercial": "ACURA|TL|2013|AUTO",
+          "string_tecnico": "ACURA|TL|2013|AUTO",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2013,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "352711",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "6de5d008ae7cb1662734b228af25f08367777939dcc471729a7fdd7de270012d",
+          "hash_comercial": "4fc2e2e8e370ec8dfbf8f89801b3b4aac2c6faae806de2b7aeb784dbed592474",
+          "string_comercial": "ACURA|TL|2013|AUTO",
+          "string_tecnico": "ACURA|TL|2013|AUTO|V6",
+          "marca": "ACURA",
+          "modelo": "TL",
+          "anio": 2013,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "352470",
+          "version_original": "V6 3.7L SPORTSHIFT R-18 AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "cc5c2f558ee8f2ff5ea0d23662186f94e16d8a120c3119314483ff2adc2f6f25",
+          "hash_comercial": "ca4f18b488ea8730c65eb5cbcf8eb088237979f2e42cf813f5114e1415ad2245",
+          "string_comercial": "ACURA|TLX|2015|AUTO",
+          "string_tecnico": "ACURA|TLX|2015|AUTO|ADVANCE|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2015,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "356001",
+          "version_original": "ADVANCE 4P V6 3.5L VP ABS BA QC AC GPS R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "d7701d70bde4a327b9853f4a6ad0fd72a00be94bb2255cb48544cc24dc897f0c",
+          "hash_comercial": "ca4f18b488ea8730c65eb5cbcf8eb088237979f2e42cf813f5114e1415ad2245",
+          "string_comercial": "ACURA|TLX|2015|AUTO",
+          "string_tecnico": "ACURA|TLX|2015|AUTO|TECH|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2015,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "356000",
+          "version_original": "TECH 4P L4 2.4L VP ABS BA QC AC GPS R17 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "a5921fbd166e6a8f22c9887750bf61e7956eb50d963ae4ed76b40031aa6abd7f",
+          "hash_comercial": "6d028ddb5a2ad2940820c82b8b8daf3e10591755d9306d2a2a9a03e7935c4bed",
+          "string_comercial": "ACURA|TLX|2016|AUTO",
+          "string_tecnico": "ACURA|TLX|2016|AUTO|ADVANCE|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2016,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "356923",
+          "version_original": "ADVANCE 4P V6 3.5L VP ABS BA QC AC GPS R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "55191ce5aadcf3bb97fa0c1a198d5b4dac556ba366ac2c96d8534edd73278202",
+          "hash_comercial": "6d028ddb5a2ad2940820c82b8b8daf3e10591755d9306d2a2a9a03e7935c4bed",
+          "string_comercial": "ACURA|TLX|2016|AUTO",
+          "string_tecnico": "ACURA|TLX|2016|AUTO|TECH|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2016,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "356922",
+          "version_original": "TECH 4P L4 2.4L VP ABS BA QC AC GPS R17 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "a78a49ed8995b351cfac14b237eea53ac1ef03a470f0e9aa9fa34f9ea59fd5e3",
+          "hash_comercial": "2eb8a77716352c997d2d3ee10971007d1a3e289c105d05d9c0bce1929e60fd5b",
+          "string_comercial": "ACURA|TLX|2017|AUTO",
+          "string_tecnico": "ACURA|TLX|2017|AUTO|ADVANCE|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2017,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "355626",
+          "version_original": "ADVANCE 4P V6 3.5L VP ABS BA QC AC GPS R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "0dda96a666c664cec61f7564bf3960643b04f5de106cf536764ec1faa7fe329c",
+          "hash_comercial": "2eb8a77716352c997d2d3ee10971007d1a3e289c105d05d9c0bce1929e60fd5b",
+          "string_comercial": "ACURA|TLX|2017|AUTO",
+          "string_tecnico": "ACURA|TLX|2017|AUTO|TECH|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2017,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "355625",
+          "version_original": "TECH 4P L4 2.4L VP ABS BA QC AC GPS R17 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "58635987f11939e1b55238e14a4f2f965f1129da5952badbaf13426ca7854441",
+          "hash_comercial": "778a4ecc088ffd23510cacd661244f8ecda4ca6ca96d31f8878ce00573e6c8c9",
+          "string_comercial": "ACURA|TLX|2018|AUTO",
+          "string_tecnico": "ACURA|TLX|2018|AUTO|ADVANCE|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2018,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "358811",
+          "version_original": "ADVANCE 4P V6 3.5L VP ABS BA QC AC GPS R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "d2ec7e9c783aba01052ecd2dd8734d68db50f3d6043a4f179771fc085b83053c",
+          "hash_comercial": "778a4ecc088ffd23510cacd661244f8ecda4ca6ca96d31f8878ce00573e6c8c9",
+          "string_comercial": "ACURA|TLX|2018|AUTO",
+          "string_tecnico": "ACURA|TLX|2018|AUTO|A-SPEC|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2018,
+          "transmision": "AUTO",
+          "version": "A-SPEC",
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "361109",
+          "version_original": "A-SPEC 4P V6 3.5L VP ABS BA QC AC R19 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "b2da395088627c22096e579f6a883d969cee4525a6ceffefe7429f9a70f9acb0",
+          "hash_comercial": "99db9943ac79b9657250b6029b94b47bc9f95169b9ab1c5f432fd4304d483487",
+          "string_comercial": "ACURA|TLX|2019|AUTO",
+          "string_tecnico": "ACURA|TLX|2019|AUTO|ADVANCE|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "359704",
+          "version_original": "ADVANCE 4P V6 3.5L VP ABS BA QC AC GPS R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "62157525b4668cd4acaa6303bfbe34b9c77920871ad40b1fc3cb2526ca0ac22e",
+          "hash_comercial": "99db9943ac79b9657250b6029b94b47bc9f95169b9ab1c5f432fd4304d483487",
+          "string_comercial": "ACURA|TLX|2019|AUTO",
+          "string_tecnico": "ACURA|TLX|2019|AUTO|TECH|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2019,
+          "transmision": "AUTO",
+          "version": "TECH",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "360207",
+          "version_original": "TECH A-SPEC 4P L4 2.4L VP ABS BA QC AC R19 GPS AUT 5 O",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "c6ee0f4d34bd226de3daf54b1adb6c6a8131bbb4211640cd0239e962b65e07a7",
+          "hash_comercial": "db15c09cdf151e4721772aa824ef32d783e25177f6aba296e65d03d45be97a27",
+          "string_comercial": "ACURA|TLX|2020|AUTO",
+          "string_tecnico": "ACURA|TLX|2020|AUTO|ADVANCE|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2020,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "364728",
+          "version_original": "ADVANCE 4P V6 3.5L VP ABS BA QC AC GPS R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "c64637611a5ba4afbd529a5b2143f1a1aa613f236497716f6fcbd47f081d29db",
+          "hash_comercial": "68b60914d9ee329c2a43c0538c2956eab587d13986a91f925b9941b4b8a7e6eb",
+          "string_comercial": "ACURA|TLX|2021|AUTO",
+          "string_tecnico": "ACURA|TLX|2021|AUTO|ADVANCE|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2021,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "365947",
+          "version_original": "ADVANCE 4P L4 2.0T TURBO VP ABS BA EBD QC AC AUT 5 OCU",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "6e1f1af0fe98859d47655943bf0104316cc38937d8b605519c86363dc5d03e07",
+          "hash_comercial": "68b60914d9ee329c2a43c0538c2956eab587d13986a91f925b9941b4b8a7e6eb",
+          "string_comercial": "ACURA|TLX|2021|AUTO",
+          "string_tecnico": "ACURA|TLX|2021|AUTO|ADVANCE|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2021,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "365642",
+          "version_original": "ADVANCE 4P V6 3.5L VP ABS BA QC AC GPS R18 AUT 5 OCUP",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "47d3ed61f01bf744c40ac6ce02f4f0817ddaac3f6596c3dd2067060a6a4ddfc2",
+          "hash_comercial": "e05da4283df5be775adc485c543f63445f2b859b802e56c17b1e39b9b73a55f4",
+          "string_comercial": "ACURA|TLX|2022|AUTO",
+          "string_tecnico": "ACURA|TLX|2022|AUTO|ADVANCE|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2022,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "366591",
+          "version_original": "ADVANCE 4P L4 2.0T TURBO VP ABS BA EBD QC AC AUT 5 OCU",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "dfa63e969d1887cc870b618264f2ae40f7b10056b4c3e65f49c372d14cd48fa9",
+          "hash_comercial": "e05da4283df5be775adc485c543f63445f2b859b802e56c17b1e39b9b73a55f4",
+          "string_comercial": "ACURA|TLX|2022|AUTO",
+          "string_tecnico": "ACURA|TLX|2022|AUTO|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2022,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "366594",
+          "version_original": "TYPE-S 4P V6 3.0T BA ABS AA VP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "927e1d7447a18ec0b0c662c294f52753ad07d36cb55691e7e42015eadbc29ed3",
+          "hash_comercial": "4bf26eeb8290889fc4e2a976931d8667c1ac23b6d81e06f939b47bd951d7576d",
+          "string_comercial": "ACURA|TLX|2023|AUTO",
+          "string_tecnico": "ACURA|TLX|2023|AUTO|ADVANCE|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2023,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "367539",
+          "version_original": "ADVANCE 4P L4 2.0T TURBO VP ABS BA EBD QC AC AUT 5 OCU",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "c1c1774a3f5463fdd067e4a111da55d453cc2339f8f1d9fde50d3028240e141c",
+          "hash_comercial": "4bf26eeb8290889fc4e2a976931d8667c1ac23b6d81e06f939b47bd951d7576d",
+          "string_comercial": "ACURA|TLX|2023|AUTO",
+          "string_tecnico": "ACURA|TLX|2023|AUTO|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2023,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "367542",
+          "version_original": "TYPE-S 4P V6 3.0T BA ABS AA VP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "2addb2d8c72d1288355d7dc78f4239f7b51de2e0e37d9d5c25027143e505bd06",
+          "hash_comercial": "c2ca13ed84e657c2dc28172b49ac9e4d966a085a99c44f9cb7464f7ac880b2c7",
+          "string_comercial": "ACURA|TLX|2024|AUTO",
+          "string_tecnico": "ACURA|TLX|2024|AUTO|ADVANCE|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2024,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "370346",
+          "version_original": "ADVANCE 4P L4 2.0T TURBO VP ABS BA EBD QC AC AUT 5 OCU",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "32d348512af979ff3b5d66d5ba17cc6805a8eba48b993ca1cfa3e71b1a7a2cd1",
+          "hash_comercial": "c2ca13ed84e657c2dc28172b49ac9e4d966a085a99c44f9cb7464f7ac880b2c7",
+          "string_comercial": "ACURA|TLX|2024|AUTO",
+          "string_tecnico": "ACURA|TLX|2024|AUTO|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2024,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "370349",
+          "version_original": "TYPE-S 4P V6 3.0T BA ABS AA VP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "998bac20bea240989c4a585d607aa466a4dd71fb22bfee0b0c534f100427fc47",
+          "hash_comercial": "98f0370ce018819a0e6232402b0205e844391945e1d7d9e1e2dc7d471db47cc2",
+          "string_comercial": "ACURA|TLX|2025|AUTO",
+          "string_tecnico": "ACURA|TLX|2025|AUTO|ADVANCE|L4|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2025,
+          "transmision": "AUTO",
+          "version": "ADVANCE",
+          "motor_config": "L4",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "371863",
+          "version_original": "ADVANCE 4P L4 2.0T TURBO VP ABS BA EBD QC AC AUT 5 OCU",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "38eff98e799a0f6e9268c7d0b174225e69a328159d5ec101d61435742ecc9e4a",
+          "hash_comercial": "98f0370ce018819a0e6232402b0205e844391945e1d7d9e1e2dc7d471db47cc2",
+          "string_comercial": "ACURA|TLX|2025|AUTO",
+          "string_tecnico": "ACURA|TLX|2025|AUTO|V6|SEDAN",
+          "marca": "ACURA",
+          "modelo": "TLX",
+          "anio": 2025,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SEDAN",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "371864",
+          "version_original": "TYPE-S 4P V6 3.0T BA ABS AA VP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "fde7f7d6760c559fa9ca82d8187fb2b4c068e22f6d87c1313a3ddd335a52f1e2",
+          "hash_comercial": "fde7f7d6760c559fa9ca82d8187fb2b4c068e22f6d87c1313a3ddd335a52f1e2",
+          "string_comercial": "ACURA|TSX|2009|AUTO",
+          "string_tecnico": "ACURA|TSX|2009|AUTO",
+          "marca": "ACURA",
+          "modelo": "TSX",
+          "anio": 2009,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "344761",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "b322ea1e12c11444b1b7f3daee10fa2cae2f174d4c3ffa3f28dc056a20c75095",
+          "hash_comercial": "dfc84e405646980e08a00a44f0fad7af406ad7618fcc4dfb0495bc2079f83b97",
+          "string_comercial": "ACURA|TSX|2010|AUTO",
+          "string_tecnico": "ACURA|TSX|2010|AUTO|V6",
+          "marca": "ACURA",
+          "modelo": "TSX",
+          "anio": 2010,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "347744",
+          "version_original": "3.5L V6 280 HP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "dfc84e405646980e08a00a44f0fad7af406ad7618fcc4dfb0495bc2079f83b97",
+          "hash_comercial": "dfc84e405646980e08a00a44f0fad7af406ad7618fcc4dfb0495bc2079f83b97",
+          "string_comercial": "ACURA|TSX|2010|AUTO",
+          "string_tecnico": "ACURA|TSX|2010|AUTO",
+          "marca": "ACURA",
+          "modelo": "TSX",
+          "anio": 2010,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "347823",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "e0616906b913ad9e8d5e00172499ad8334b4f695f0f5a9c16cd9dfdff7e5a32b",
+          "hash_comercial": "5c0f9911dbeff16cccb6b8ea4f51f4127c950fc6ceb6da59d98e2a435a7b0478",
+          "string_comercial": "ACURA|TSX|2011|AUTO",
+          "string_tecnico": "ACURA|TSX|2011|AUTO|V6",
+          "marca": "ACURA",
+          "modelo": "TSX",
+          "anio": 2011,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "348620",
+          "version_original": "3.5L V6 280 HP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "5c0f9911dbeff16cccb6b8ea4f51f4127c950fc6ceb6da59d98e2a435a7b0478",
+          "hash_comercial": "5c0f9911dbeff16cccb6b8ea4f51f4127c950fc6ceb6da59d98e2a435a7b0478",
+          "string_comercial": "ACURA|TSX|2011|AUTO",
+          "string_tecnico": "ACURA|TSX|2011|AUTO",
+          "marca": "ACURA",
+          "modelo": "TSX",
+          "anio": 2011,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "346171",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "4043697dbef9d0b49f4f6ff2215d3292b3959c8052419726803d181308e50266",
+          "hash_comercial": "a1d458f045cf2d58b5abaffe8a3e77fe7dd89a27d5bde584a78a10c45cde083b",
+          "string_comercial": "ACURA|TSX|2012|AUTO",
+          "string_tecnico": "ACURA|TSX|2012|AUTO|V6",
+          "marca": "ACURA",
+          "modelo": "TSX",
+          "anio": 2012,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "351707",
+          "version_original": "3.5L V6 280 HP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "a1d458f045cf2d58b5abaffe8a3e77fe7dd89a27d5bde584a78a10c45cde083b",
+          "hash_comercial": "a1d458f045cf2d58b5abaffe8a3e77fe7dd89a27d5bde584a78a10c45cde083b",
+          "string_comercial": "ACURA|TSX|2012|AUTO",
+          "string_tecnico": "ACURA|TSX|2012|AUTO",
+          "marca": "ACURA",
+          "modelo": "TSX",
+          "anio": 2012,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "351766",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "d094bc913f6807050803d9cfc3444a73282c65b6abd6a95ecacc7c043b657cf9",
+          "hash_comercial": "a7117529fbbb86f676be7947b33da21bb576a7bc466e53a9c8d4f6043ba3c917",
+          "string_comercial": "ACURA|TSX|2013|AUTO",
+          "string_tecnico": "ACURA|TSX|2013|AUTO|V6",
+          "marca": "ACURA",
+          "modelo": "TSX",
+          "anio": 2013,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "352632",
+          "version_original": "3.5L V6 280 HP AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "a7117529fbbb86f676be7947b33da21bb576a7bc466e53a9c8d4f6043ba3c917",
+          "hash_comercial": "a7117529fbbb86f676be7947b33da21bb576a7bc466e53a9c8d4f6043ba3c917",
+          "string_comercial": "ACURA|TSX|2013|AUTO",
+          "string_tecnico": "ACURA|TSX|2013|AUTO",
+          "marca": "ACURA",
+          "modelo": "TSX",
+          "anio": 2013,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "352680",
+          "version_original": "AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "1041b231306b2263a1cc945c21885014c8784c0e96e4bbf5750b004506f79ea8",
+          "hash_comercial": "f024ffdd04db5f260e41dc3dacfde3ad2c477422d974134dca9d7bea4f0ecb70",
+          "string_comercial": "ACURA|ZDX|2010|AUTO",
+          "string_tecnico": "ACURA|ZDX|2010|AUTO|V6|SUV",
+          "marca": "ACURA",
+          "modelo": "ZDX",
+          "anio": 2010,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "345443",
+          "version_original": "V6 3.7L AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "736c0d382cc6cdac4666432838b1397b4c5a70f12edaaef400205b366df8556c",
+          "hash_comercial": "d41d9060599bcc2bba22433565fa45fcf0d5c5786ff3181d73114969af1d0c6e",
+          "string_comercial": "ACURA|ZDX|2011|AUTO",
+          "string_tecnico": "ACURA|ZDX|2011|AUTO|V6|SUV",
+          "marca": "ACURA",
+          "modelo": "ZDX",
+          "anio": 2011,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": "SUV",
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "348502",
+          "version_original": "V6 3.7L AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "fa6edec90a753197fd2b5840659f9870fb84d3934454e662c48d15f5cf072b01",
+          "hash_comercial": "11b2fd7471fa34b658043ca5627364d14e6ef47db4e7a1fd6ef11d3f2f9aeca6",
+          "string_comercial": "ALFA ROMEO|147|2002|MANUAL",
+          "string_tecnico": "ALFA ROMEO|147|2002|MANUAL|L4",
+          "marca": "ALFA ROMEO",
+          "modelo": "147",
+          "anio": 2002,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "334969",
+          "version_original": "2P L4 V/P CD Q/C STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "11b2fd7471fa34b658043ca5627364d14e6ef47db4e7a1fd6ef11d3f2f9aeca6",
+          "hash_comercial": "11b2fd7471fa34b658043ca5627364d14e6ef47db4e7a1fd6ef11d3f2f9aeca6",
+          "string_comercial": "ALFA ROMEO|147|2002|MANUAL",
+          "string_tecnico": "ALFA ROMEO|147|2002|MANUAL",
+          "marca": "ALFA ROMEO",
+          "modelo": "147",
+          "anio": 2002,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "334966",
+          "version_original": "3P DISTINCTIVE SELESPEED STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "77d09f691f12ee9a447f5c736c9421438a3d52cf2c4e6f916d044502e5c1b682",
+          "hash_comercial": "a14ac013ad3de141a4df66309dad3a6e1ec9f6975771ad6c0ae2416d41fdc962",
+          "string_comercial": "ALFA ROMEO|147|2003|MANUAL",
+          "string_tecnico": "ALFA ROMEO|147|2003|MANUAL|L4",
+          "marca": "ALFA ROMEO",
+          "modelo": "147",
+          "anio": 2003,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "334334",
+          "version_original": "2P L4 V/P CD Q/C STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "a14ac013ad3de141a4df66309dad3a6e1ec9f6975771ad6c0ae2416d41fdc962",
+          "hash_comercial": "a14ac013ad3de141a4df66309dad3a6e1ec9f6975771ad6c0ae2416d41fdc962",
+          "string_comercial": "ALFA ROMEO|147|2003|MANUAL",
+          "string_tecnico": "ALFA ROMEO|147|2003|MANUAL",
+          "marca": "ALFA ROMEO",
+          "modelo": "147",
+          "anio": 2003,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "334332",
+          "version_original": "3P DISTINCTIVE SELESPEED STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "6a7e1e7a8137499b746df64897c41515dfce4a5191c68912845218901ab451f6",
+          "hash_comercial": "a453b7f6fe4a64c0ff78bb04398b95050e949c9d3df08ee27399da046ed70e92",
+          "string_comercial": "ALFA ROMEO|147|2004|MANUAL",
+          "string_tecnico": "ALFA ROMEO|147|2004|MANUAL|L4",
+          "marca": "ALFA ROMEO",
+          "modelo": "147",
+          "anio": 2004,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "336886",
+          "version_original": "2P L4 V/P CD Q/C STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "a453b7f6fe4a64c0ff78bb04398b95050e949c9d3df08ee27399da046ed70e92",
+          "hash_comercial": "a453b7f6fe4a64c0ff78bb04398b95050e949c9d3df08ee27399da046ed70e92",
+          "string_comercial": "ALFA ROMEO|147|2004|MANUAL",
+          "string_tecnico": "ALFA ROMEO|147|2004|MANUAL",
+          "marca": "ALFA ROMEO",
+          "modelo": "147",
+          "anio": 2004,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "336883",
+          "version_original": "3P DISTINCTIVE SELESPEED STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "569ff4d919a715b3b0096ab58a3fe75eda002370430e4fce798c582d8cc9588f",
+          "hash_comercial": "2296a340c1b1568bbccf11101a95af602bf6e5d68382888e529a7dbbca49c905",
+          "string_comercial": "ALFA ROMEO|147|2005|MANUAL",
+          "string_tecnico": "ALFA ROMEO|147|2005|MANUAL|L4",
+          "marca": "ALFA ROMEO",
+          "modelo": "147",
+          "anio": 2005,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "336585",
+          "version_original": "2P L4 V/P CD Q/C STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "2296a340c1b1568bbccf11101a95af602bf6e5d68382888e529a7dbbca49c905",
+          "hash_comercial": "2296a340c1b1568bbccf11101a95af602bf6e5d68382888e529a7dbbca49c905",
+          "string_comercial": "ALFA ROMEO|147|2005|MANUAL",
+          "string_tecnico": "ALFA ROMEO|147|2005|MANUAL",
+          "marca": "ALFA ROMEO",
+          "modelo": "147",
+          "anio": 2005,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "336583",
+          "version_original": "3P DISTINCTIVE SELESPEED STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "d1e93adb16aee6a83aa14bc9f18d67d32ed81bceb18583d1bb36a31fd7d6880e",
+          "hash_comercial": "d1e93adb16aee6a83aa14bc9f18d67d32ed81bceb18583d1bb36a31fd7d6880e",
+          "string_comercial": "ALFA ROMEO|147|2007|MANUAL",
+          "string_tecnico": "ALFA ROMEO|147|2007|MANUAL",
+          "marca": "ALFA ROMEO",
+          "modelo": "147",
+          "anio": 2007,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": null,
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "342800",
+          "version_original": "3P DISTINCTIVE SELESPEED STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "6b41c25381cc742329b19f71062e66f281e209dc1a6f6fcb26942347cf240224",
+          "hash_comercial": "69810b07383a76ccb852e15a4baf749b826cd00936050f949322aeaca5849965",
+          "string_comercial": "ALFA ROMEO|156|2001|MANUAL",
+          "string_tecnico": "ALFA ROMEO|156|2001|MANUAL|L4",
+          "marca": "ALFA ROMEO",
+          "modelo": "156",
+          "anio": 2001,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "334034",
+          "version_original": "4P L4 V/P CD STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "485e77e2d2f5e4776ded8d4b55f0bd1029d44882ba81e1f20092e757e1720571",
+          "hash_comercial": "729e951c4699506541084fbf243d41377ad0a3603168ac586a2025b133173c79",
+          "string_comercial": "ALFA ROMEO|156|2002|MANUAL",
+          "string_tecnico": "ALFA ROMEO|156|2002|MANUAL|L4",
+          "marca": "ALFA ROMEO",
+          "modelo": "156",
+          "anio": 2002,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "334972",
+          "version_original": "4P L4 V/P CD STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "5ad8710e8ea5e02838f3dddd7d685a7009e829eedaac1ab616db4d8d94b23502",
+          "hash_comercial": "659e2212550ec8406fb4ec9b4c6eba3141285cde3a95e96744754a187ff73780",
+          "string_comercial": "ALFA ROMEO|156|2002|AUTO",
+          "string_tecnico": "ALFA ROMEO|156|2002|AUTO|V6",
+          "marca": "ALFA ROMEO",
+          "modelo": "156",
+          "anio": 2002,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "334973",
+          "version_original": "4P V6 Q-SYSTEM AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "8825b97de2fcddabd62d7589204a00b9966a1fca01699e2657bd20fa67a3b030",
+          "hash_comercial": "729e951c4699506541084fbf243d41377ad0a3603168ac586a2025b133173c79",
+          "string_comercial": "ALFA ROMEO|156|2002|MANUAL",
+          "string_tecnico": "ALFA ROMEO|156|2002|MANUAL|SPORT|L4",
+          "marca": "ALFA ROMEO",
+          "modelo": "156",
+          "anio": 2002,
+          "transmision": "MANUAL",
+          "version": "SPORT",
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "334974",
+          "version_original": "SPORT WAGON L4 STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "5dd70ddb609732b045fe1fa46c9df6e6676f49f00a791f261555c67346ed618c",
+          "hash_comercial": "1a9bfeb1ba9b5f838c5e2c3eef1cc042ac767ac7aed6d674478d61ef9cea0eab",
+          "string_comercial": "ALFA ROMEO|156|2003|MANUAL",
+          "string_tecnico": "ALFA ROMEO|156|2003|MANUAL|L4",
+          "marca": "ALFA ROMEO",
+          "modelo": "156",
+          "anio": 2003,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "334336",
+          "version_original": "4P L4 V/P CD STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "1c1a83d07c7fec488ab68db22acc67001def2a369b0d67246d5c04dbce443ac8",
+          "hash_comercial": "1a9bfeb1ba9b5f838c5e2c3eef1cc042ac767ac7aed6d674478d61ef9cea0eab",
+          "string_comercial": "ALFA ROMEO|156|2003|MANUAL",
+          "string_tecnico": "ALFA ROMEO|156|2003|MANUAL|V6",
+          "marca": "ALFA ROMEO",
+          "modelo": "156",
+          "anio": 2003,
+          "transmision": "MANUAL",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "339544",
+          "version_original": "4P V6 GTA STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "26276015adb9497645ee2859abd9333285afe810f4bad7ce5433146213335e23",
+          "hash_comercial": "595764d6edb73cfbb31217897fce58637469959643142615ecb968b707717dac",
+          "string_comercial": "ALFA ROMEO|156|2003|AUTO",
+          "string_tecnico": "ALFA ROMEO|156|2003|AUTO|V6",
+          "marca": "ALFA ROMEO",
+          "modelo": "156",
+          "anio": 2003,
+          "transmision": "AUTO",
+          "version": null,
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "339537",
+          "version_original": "4P V6 Q-SYSTEM AUT., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "21a889da222d2853538cc868158908530f8cf841ee7b681e9c679c9aa8f7498d",
+          "hash_comercial": "1a9bfeb1ba9b5f838c5e2c3eef1cc042ac767ac7aed6d674478d61ef9cea0eab",
+          "string_comercial": "ALFA ROMEO|156|2003|MANUAL",
+          "string_tecnico": "ALFA ROMEO|156|2003|MANUAL|SPORT|L4",
+          "marca": "ALFA ROMEO",
+          "modelo": "156",
+          "anio": 2003,
+          "transmision": "MANUAL",
+          "version": "SPORT",
+          "motor_config": "L4",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "339538",
+          "version_original": "SPORT WAGON L4 STD., 05 OCUP.",
+          "activo": true
+        }
+      },
+      {
+        "json": {
+          "id_canonico": "4be365910b8f261058cf2c12e50d03a80869d7961e44446ea6592dd50fc718de",
+          "hash_comercial": "1a9bfeb1ba9b5f838c5e2c3eef1cc042ac767ac7aed6d674478d61ef9cea0eab",
+          "string_comercial": "ALFA ROMEO|156|2003|MANUAL",
+          "string_tecnico": "ALFA ROMEO|156|2003|MANUAL|SPORT|V6",
+          "marca": "ALFA ROMEO",
+          "modelo": "156",
+          "anio": 2003,
+          "transmision": "MANUAL",
+          "version": "SPORT",
+          "motor_config": "V6",
+          "carroceria": null,
+          "traccion": null,
+          "origen_aseguradora": "QUALITAS",
+          "id_original": "339545",
+          "version_original": "SPORT WAGON V6 GTA STD., 05 OCUP.",
+          "activo": true
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos para Función Maestra",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Datos para Función Maestra": {
+      "main": [
+        [
+          {
+            "node": "Llamar Función Maestra",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Llamar Función Maestra": {
+      "main": [
+        []
+      ]
+    },
+    "Resumen Final": {
+      "main": [
+        [
+          {
+            "node": "Preparar Notificación (Opcional)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "711141c5-beaf-4344-9e6d-de2e4a66c47a",
+  "meta": {
+    "instanceId": "900709ac205bf412bdd7b3d4452073dce9dfbb650e50cd24da57187d1da44e89"
+  },
+  "id": "L9EcoZNWSjGdaMh6",
+  "tags": []
+}

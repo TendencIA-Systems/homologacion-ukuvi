@@ -1,0 +1,144 @@
+{
+  "name": "ETL - Chubb",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1376,
+        544
+      ],
+      "id": "3ff37540-9f63-4bde-abd8-e6a6d1d5cec2",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\n// ==========================================\n// CONFIGURACIÓN ESPECÍFICA PARA CHUBB\n// ==========================================\nconst ASEGURADORA = 'CHUBB';\n\n// ==========================================\n// DICCIONARIOS DE NORMALIZACIÓN\n// ==========================================\n\nconst SINONIMOS_MARCAS = {\n    'MERCEDES BENZ': 'MERCEDES-BENZ',\n    'MERCEDES': 'MERCEDES-BENZ',\n    'LAND ROVER': 'LAND ROVER',\n    'VW': 'VOLKSWAGEN',\n    'CHEV': 'CHEVROLET',\n    'CHEVY': 'CHEVROLET',\n    'GMC': 'GMC',\n    'GENERAL MOTORS': 'CHEVROLET',\n    'CHRYSLER': 'CHRYSLER',\n    'ALFA': 'ALFA ROMEO',  // Solo normaliza \"ALFA\" a \"ALFA ROMEO\"\n    // NO incluir 'ALFA ROMEO': 'ALFA ROMEO' porque ya es correcto\n    // NO incluir 'VOLKSWAGEN': 'VOLKSWAGEN' porque ya es correcto\n    'BMW': 'BMW',\n    'MINI': 'MINI',\n    'AUDI': 'AUDI',\n    'LINCOLN': 'LINCOLN',\n    'JAC': 'JAC',\n    'FIAT': 'FIAT',\n    'MAZDA': 'MAZDA',\n    'TOYOTA': 'TOYOTA',\n    'HONDA': 'HONDA',\n    'SEAT': 'SEAT',\n    'PEUGEOT': 'PEUGEOT',\n    'RENAULT': 'RENAULT',\n    'VOLVO': 'VOLVO',\n    'FORD': 'FORD',\n    'NISSAN': 'NISSAN',\n    'MITSUBISHI': 'MITSUBISHI',\n    'SUZUKI': 'SUZUKI',\n    'PORSCHE': 'PORSCHE',\n    'ISUZU': 'ISUZU',\n    'REMOLQUES': 'REMOLQUES',\n    'BAIC': 'BAIC',\n    'ACURA': 'ACURA',\n    'FERRARI': 'FERRARI',\n    'LAMBORGHINI': 'LAMBORGHINI',\n    'BENTLEY': 'BENTLEY',\n    'ASTON MARTIN': 'ASTON MARTIN',\n    'INFINITI': 'INFINITI',\n    'CUPRA': 'CUPRA'\n};\n\n// Mapeo de transmisiones basado en códigos de Chubb\nconst MAPA_TRANSMISIONES = {\n    1: 'MANUAL',\n    2: 'AUTO',\n    0: 'MANUAL',\n    null: 'NO_ESPECIFICADA',\n    undefined: 'NO_ESPECIFICADA'\n};\n\n// ==========================================\n// FUNCIONES DE NORMALIZACIÓN\n// ==========================================\n\nfunction normalizarTexto(texto) {\n    if (!texto) return '';\n    return texto\n        .toUpperCase()\n        .normalize('NFD')\n        .replace(/[\\u0300-\\u036f]/g, '')\n        .replace(/[^A-Z0-9\\s-]/g, '')\n        .replace(/\\s+/g, ' ')\n        .trim();\n}\n\nfunction normalizarMarca(marca) {\n    if (!marca) return 'SIN_MARCA';\n    const marcaNorm = normalizarTexto(marca);\n    return SINONIMOS_MARCAS[marcaNorm] || marcaNorm;\n}\n\nfunction normalizarModelo(modelo, marca) {\n    if (!modelo) return 'SIN_MODELO';\n    \n    let modeloNorm = normalizarTexto(modelo);\n    const marcaNorm = normalizarTexto(marca);\n    \n    // Eliminar la marca del inicio del modelo si está presente\n    if (modeloNorm.startsWith(marcaNorm + ' ')) {\n        modeloNorm = modeloNorm.substring(marcaNorm.length + 1);\n    }\n    \n    return modeloNorm;\n}\n\nfunction normalizarVersion(versionCompleta, versionCorta) {\n    // Preferir versión corta si está disponible\n    const version = versionCorta || versionCompleta;\n    if (!version) return 'BASICA';\n    \n    // Normalizar y extraer la parte principal de la versión\n    let versionNorm = normalizarTexto(version);\n    \n    // Remover códigos técnicos comunes al final\n    versionNorm = versionNorm\n        .replace(/\\s+(L[3-8]|V[6-8]|V1[02]|I[4-6]).*$/, '')\n        .replace(/\\s+(AUT|STD|CVT|PDK|DSG|TIPTRONIC).*$/, '')\n        .replace(/\\s+[0-9]\\s+(ABS|D\\/T).*$/, '')\n        .replace(/\\s+(IMP|IEM|IMO|ISM|FSI|MPFI).*$/, '')\n        .trim();\n    \n    return versionNorm || 'BASICA';\n}\n\nfunction normalizarTransmision(codigoTransmision, descripcionVersion) {\n    // Primero usar el código de transmisión si está disponible\n    if (codigoTransmision !== null && codigoTransmision !== undefined) {\n        const mapped = MAPA_TRANSMISIONES[codigoTransmision];\n        if (mapped && mapped !== 'NO_ESPECIFICADA') {\n            return mapped;\n        }\n    }\n    \n    // Si no hay código válido, intentar extraer de la descripción\n    if (descripcionVersion) {\n        const versionUpper = descripcionVersion.toUpperCase();\n        \n        // Buscar patrones de transmisión automática\n        if (versionUpper.includes('AUT') || \n            versionUpper.includes('CVT') || \n            versionUpper.includes('PDK') ||\n            versionUpper.includes('DSG') ||\n            versionUpper.includes('TIPTRONIC') ||\n            versionUpper.includes('S-TRONIC') ||\n            versionUpper.includes('XTRONIC') ||\n            versionUpper.includes('DCT')) {\n            return 'AUTO';\n        }\n        \n        // Buscar patrones de transmisión manual\n        if (versionUpper.includes('STD') || \n            versionUpper.includes('MANUAL')) {\n            return 'MANUAL';\n        }\n    }\n    \n    return 'NO_ESPECIFICADA';\n}\n\n// ==========================================\n// FUNCIONES DE EXTRACCIÓN DE ESPECIFICACIONES\n// ==========================================\n\nfunction extraerEspecificaciones(versionCompleta, ocupantes) {\n    const especificaciones = {\n        configuracion_motor: null,\n        cilindrada_l: null,\n        potencia_hp: null,\n        numero_puertas: null,\n        tipo_carroceria: null,\n        traccion: null,\n        numero_ocupantes: ocupantes || null\n    };\n    \n    if (!versionCompleta) return especificaciones;\n    \n    const version = versionCompleta.toUpperCase();\n    \n    // Extraer configuración de motor\n    const motorMatch = version.match(/\\b(L[3-8]|V[6-8]|V1[02]|I[4-6]|W1[26])\\b/);\n    if (motorMatch) {\n        especificaciones.configuracion_motor = motorMatch[1];\n    } else if (version.match(/\\b([3-8])\\s*CIL/)) {\n        especificaciones.configuracion_motor = 'L' + RegExp.$1;\n    }\n    \n    // Extraer cilindrada (formato X.X L o X.XL)\n    // Evitar confundir con toneladas (T) o turbo (T)\n    const cilindradaMatch = version.match(/\\b(\\d\\.\\d)\\s*L\\b/);\n    if (cilindradaMatch) {\n        especificaciones.cilindrada_l = parseFloat(cilindradaMatch[1]);\n    }\n    \n    // Extraer potencia (formatos: XXX H.P., XXX HP, XXX H.P, XXX CP, XXX CV)\n    const potenciaMatch = version.match(/\\b(\\d{2,3})\\s*(H\\.?P\\.?|HP|CP|CV)\\b/);\n    if (potenciaMatch) {\n        especificaciones.potencia_hp = parseInt(potenciaMatch[1]);\n    }\n    \n    // Extraer número de puertas\n    // Patrón: número seguido de ABS o D/T\n    const puertasMatch = version.match(/\\b([2-5])\\s+(ABS|D\\/T)\\b/);\n    if (puertasMatch) {\n        especificaciones.numero_puertas = parseInt(puertasMatch[1]);\n    }\n    \n    // Extraer tipo de carrocería SOLO si está explícitamente mencionado\n    // NO inferir basado en modelo\n    if (version.includes('SEDAN')) {\n        especificaciones.tipo_carroceria = 'SEDAN';\n    } else if (version.includes('SUV')) {\n        especificaciones.tipo_carroceria = 'SUV';\n    } else if (version.includes('HATCHBACK') || version.includes('HB')) {\n        especificaciones.tipo_carroceria = 'HATCHBACK';\n    } else if (version.includes('COUPE')) {\n        especificaciones.tipo_carroceria = 'COUPE';\n    } else if (version.includes('CONVERTIBLE') || version.includes('CABRIOLET')) {\n        especificaciones.tipo_carroceria = 'CONVERTIBLE';\n    } else if (version.includes('PICKUP') || version.includes('PICK UP') || version.includes('PICK-UP')) {\n        especificaciones.tipo_carroceria = 'PICKUP';\n    } else if (version.includes('VAN')) {\n        especificaciones.tipo_carroceria = 'VAN';\n    } else if (version.includes('WAGON')) {\n        especificaciones.tipo_carroceria = 'WAGON';\n    }\n    \n    // Extraer tracción\n    if (version.match(/\\b(4X4|4WD|AWD)\\b/)) {\n        especificaciones.traccion = '4WD';\n    } else if (version.match(/\\b(QUATTRO|XDRIVE|4MATIC|4MOTION|REALTIME)\\b/)) {\n        especificaciones.traccion = '4WD';\n    } else if (version.includes('FWD')) {\n        especificaciones.traccion = 'FWD';\n    } else if (version.includes('RWD')) {\n        especificaciones.traccion = 'RWD';\n    }\n    \n    // Ajustar ocupantes si no está disponible y tenemos puertas\n    if (!especificaciones.numero_ocupantes && especificaciones.numero_puertas) {\n        if (especificaciones.numero_puertas === 2) {\n            especificaciones.numero_ocupantes = 4;\n        } else if (especificaciones.numero_puertas === 3) {\n            especificaciones.numero_ocupantes = 4;\n        } else if (especificaciones.numero_puertas === 4) {\n            especificaciones.numero_ocupantes = 5;\n        } else if (especificaciones.numero_puertas === 5) {\n            especificaciones.numero_ocupantes = 5;\n        }\n    }\n    \n    return especificaciones;\n}\n\nfunction generarHashComercial(marca, modelo, año, version, transmision) {\n    const componentes = [\n        marca.toUpperCase(),\n        modelo.toUpperCase(),\n        año.toString(),\n        version.toUpperCase(),\n        transmision.toUpperCase()\n    ];\n    \n    const textoHash = componentes.join('|');\n    \n    // Generar hash SHA256 y tomar EXACTAMENTE los primeros 16 caracteres hexadecimales\n    const hashCompleto = crypto\n        .createHash('sha256')\n        .update(textoHash, 'utf8')\n        .digest('hex');\n    \n    // IMPORTANTE: Retornar exactamente 16 caracteres\n    return hashCompleto.substring(0, 16);\n}\n\nfunction generarHashTecnico(marca, modelo, año, version, transmision, motor, puertas, carroceria, cilindrada, traccion, potencia, ocupantes) {\n    const componentes = [\n        marca.toUpperCase(),\n        modelo.toUpperCase(),\n        año.toString(),\n        version.toUpperCase(),\n        transmision.toUpperCase(),\n        motor || '',\n        puertas || '',\n        carroceria || '',\n        cilindrada || '',\n        traccion || '',\n        potencia || '',\n        ocupantes || ''\n    ];\n    \n    const textoHash = componentes.join('|');\n    \n    // Generar hash SHA256 y tomar EXACTAMENTE los primeros 16 caracteres hexadecimales\n    const hashCompleto = crypto\n        .createHash('sha256')\n        .update(textoHash, 'utf8')\n        .digest('hex');\n    \n    // IMPORTANTE: Retornar exactamente 16 caracteres\n    return hashCompleto.substring(0, 16);\n}\n\nfunction generarSpecSignature(motor, cilindrada, potencia, puertas, carroceria) {\n    const parts = [];\n    \n    if (motor) parts.push(motor);\n    if (cilindrada) parts.push(`${cilindrada}L`);\n    if (potencia) parts.push(`${potencia}HP`);\n    if (puertas) parts.push(`${puertas}P`);\n    if (carroceria) parts.push(carroceria);\n    \n    return parts.length > 0 ? parts.join('|') : null;\n}\n\n// ==========================================\n// PROCESAMIENTO PRINCIPAL\n// ==========================================\n\nconst items = $input.all();\nconst registros = [];\nconst fechaProceso = new Date().toISOString();\n\nfor (const item of items) {\n    const data = item.json;\n    \n    // Validaciones básicas\n    if (!data.marca || !data.modelo || !data.año) {\n        continue;\n    }\n    \n    // Normalización básica\n    const marcaNormalizada = normalizarMarca(data.marca);\n    const modeloNormalizado = normalizarModelo(data.modelo, data.marca);\n    const transmisionNormalizada = normalizarTransmision(\n        data.transmision_codigo, \n        data.version_completa\n    );\n    \n    // Normalizar versiones\n    const versionNormalizada = normalizarVersion(\n        data.version_completa, \n        data.version_corta\n    );\n    \n    // Extraer especificaciones técnicas\n    // Para Chubb, el campo ocupantes viene de la tabla NVehiculo\n    const ocupantesTabla = data.ocupantes || data.Ocupantes || null;\n    const especificaciones = extraerEspecificaciones(\n        data.version_completa,\n        ocupantesTabla\n    );\n    \n    // Generar hash comercial\n    const hashComercial = generarHashComercial(\n        marcaNormalizada,\n        modeloNormalizado,\n        data.año,\n        versionNormalizada,\n        transmisionNormalizada\n    );\n    \n    // Generar hash técnico\n    const hashTecnico = generarHashTecnico(\n        marcaNormalizada,\n        modeloNormalizado,\n        data.año,\n        versionNormalizada,\n        transmisionNormalizada,\n        especificaciones.configuracion_motor,\n        especificaciones.numero_puertas,\n        especificaciones.tipo_carroceria,\n        especificaciones.cilindrada_l,\n        especificaciones.traccion,\n        especificaciones.potencia_hp,\n        especificaciones.numero_ocupantes\n    );\n    \n    // Generar spec signature\n    const specSignature = generarSpecSignature(\n        especificaciones.configuracion_motor,\n        especificaciones.cilindrada_l,\n        especificaciones.potencia_hp,\n        especificaciones.numero_puertas,\n        especificaciones.tipo_carroceria\n    );\n    \n    // Crear registro de salida con el schema exacto solicitado\n    const registro = {\n        origen_schema: ASEGURADORA,\n        id_original: data.id_original,\n        marca: data.marca,\n        modelo: data.modelo,\n        año: data.año,\n        version: data.version_completa,\n        transmision: transmisionNormalizada,\n        marca_normalizada: marcaNormalizada,\n        modelo_normalizado: modeloNormalizado,\n        version_normalizada: versionNormalizada,\n        transmision_normalizada: transmisionNormalizada,\n        cilindrada_l: especificaciones.cilindrada_l,\n        numero_puertas: especificaciones.numero_puertas,\n        tipo_carroceria: especificaciones.tipo_carroceria,\n        configuracion_motor: especificaciones.configuracion_motor,\n        traccion: especificaciones.traccion,\n        potencia_hp: especificaciones.potencia_hp,\n        numero_ocupantes: especificaciones.numero_ocupantes,\n        hash_comercial: hashComercial,\n        hash_tecnico: hashTecnico,\n        spec_signature: specSignature,\n        hash_components: {\n            comercial: [\n                marcaNormalizada,\n                modeloNormalizado,\n                data.año,\n                versionNormalizada,\n                transmisionNormalizada\n            ],\n            tecnico: [\n                marcaNormalizada,\n                modeloNormalizado,\n                data.año,\n                versionNormalizada,\n                transmisionNormalizada,\n                especificaciones.configuracion_motor,\n                especificaciones.numero_puertas,\n                especificaciones.tipo_carroceria,\n                especificaciones.cilindrada_l,\n                especificaciones.traccion,\n                especificaciones.potencia_hp,\n                especificaciones.numero_ocupantes\n            ]\n        },\n        aseguradoras_disponibles: {\n            [ASEGURADORA]: {\n                activo: data.activo !== undefined ? Boolean(data.activo) : true,\n                fecha_actualizacion: data.fecha_actualizacion || fechaProceso,\n                catalogo_marca_id: data.catalogo_marca_id || null,\n                catalogo_modelo_id: data.catalogo_modelo_id || null\n            }\n        }\n    };\n    \n    registros.push(registro);\n}\n\nreturn registros;"
+      },
+      "id": "7ead00df-51c9-4397-a78c-0805d10ed9df",
+      "name": "Normalize Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -976,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## https://zsyapaddgdrnqfdxxzjw.supabase.co\n\n\n\n\n\n\neyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpzeWFwYWRkZ2RybnFmZHh4emp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzI5MTc5MiwiZXhwIjoyMDY4ODY3NzkyfQ.fxsYfEUkFGOP6dyrSxn2RYymcVWWQFi2te8nuJrIOyo\n",
+        "height": 80,
+        "width": 480
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -816,
+        -16
+      ],
+      "typeVersion": 1,
+      "id": "e0635159-6fff-4c0e-8094-670010f4057e",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- =====================================================\n-- QUERY DE EXTRACCIÓN PARA CHUBB\n-- TODOS los registros (no tiene campo activo explícito)\n-- ESTRUCTURA ATÍPICA: NTipo contiene el modelo real\n-- =====================================================\n\nSELECT DISTINCT\n    'CHUBB' as origen_aseguradora,\n    v.ID as id_original,\n    m.Descripcion as marca,\n    t.Descripcion as modelo, -- NTipo contiene el modelo\n    v.Modelo as anio,\n    v.VersionCorta as version_original,\n    CASE \n        WHEN v.TipoVehiculo = 'AUT' THEN 'AUTO'\n        WHEN v.TipoVehiculo = 'STD' THEN 'MANUAL'\n        ELSE NULL\n    END as transmision,\n    1 as activo -- Todos se consideran activos\nFROM chubb.NVehiculo v\nINNER JOIN chubb.NTipo t ON v.TipoID = t.ID\nINNER JOIN chubb.NMarca m ON t.MarcaID = m.ID\nWHERE \n    v.Modelo BETWEEN 2000 AND 2030\nORDER BY m.Descripcion, t.Descripcion, v.Modelo"
+      },
+      "id": "4308ec6f-8f31-4d96-8428-faed677abcdf",
+      "name": "Extract Chubb Data",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1,
+      "position": [
+        -1184,
+        544
+      ],
+      "credentials": {
+        "microsoftSql": {
+          "id": "LxcRbE0XllWrNCsR",
+          "name": "Microsoft SQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Nodo: Deduplicate by Hash - CRÍTICO para evitar duplicados\nconst items = $input.all();\nconst uniqueByHash = new Map();\nconst duplicates = new Map();\n\n// Procesar todos los items\nitems.forEach(item => {\n  const hash = item.json.hash_unico;\n  \n  if (!hash) {\n    return;\n  }\n  \n  if (uniqueByHash.has(hash)) {\n    // Contar duplicados\n    if (!duplicates.has(hash)) {\n      duplicates.set(hash, [uniqueByHash.get(hash)]);\n    }\n    duplicates.set(hash, [...duplicates.get(hash), item]);\n  } else {\n    uniqueByHash.set(hash, item);\n  }\n});\n\n// Reportar duplicados encontrados\nif (duplicates.size > 0) {  \n  // Mostrar ejemplos de duplicados\n  let exampleCount = 0;\n  for (const [hash, items] of duplicates.entries()) {\n    if (exampleCount >= 5) break;\n    \n    console.log(`\\n🔍 Hash duplicado: ${hash.substring(0, 16)}...`);\n    console.log(`   Registros: ${items.length}`);\n    \n    // Mostrar los primeros 2 registros del duplicado\n    items.slice(0, 2).forEach((item, idx) => {\n      const data = item.json;\n    });\n    \n    exampleCount++;\n  }\n  \n  // Análisis de por qué se duplican\n  const duplicateAnalysis = new Map();\n  for (const [hash, items] of duplicates.entries()) {\n    const firstItem = items[0].json;\n    const key = `${firstItem.marca_normalizada}|${firstItem.modelo_normalizado}`;\n    \n    if (!duplicateAnalysis.has(key)) {\n      duplicateAnalysis.set(key, 0);\n    }\n    duplicateAnalysis.set(key, duplicateAnalysis.get(key) + 1);\n  }\n  \n  const sortedAnalysis = Array.from(duplicateAnalysis.entries())\n    .sort((a, b) => b[1] - a[1])\n    .slice(0, 10);\n  \n  sortedAnalysis.forEach(([key, count]) => {\n    console.log(`   ${key}: ${count} hashes duplicados`);\n  });\n}\n\n// Estadísticas finales\nconst finalItems = Array.from(uniqueByHash.values());\n\nreturn finalItems;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -576,
+        544
+      ],
+      "id": "e5cde935-c3bf-4cd6-ac7c-d2f559ef5ba1",
+      "name": "Deduplicate by Hash"
+    },
+    {
+      "parameters": {
+        "options": {
+          "fileName": "hdi_data_normalizada.csv"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -976,
+        720
+      ],
+      "id": "22894ce2-8938-4199-a1bf-6112a59bde00",
+      "name": "Convert to File"
+    }
+  ],
+  "pinData": {
+    "When clicking ‘Execute workflow’": [
+      {
+        "json": {}
+      }
+    ]
+  },
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Extract Chubb Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Data": {
+      "main": [
+        []
+      ]
+    },
+    "Extract Chubb Data": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate by Hash": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "e72d473f-dc8e-4a23-bfb1-5a1402b1060f",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "900709ac205bf412bdd7b3d4452073dce9dfbb650e50cd24da57187d1da44e89"
+  },
+  "id": "HQESUzh9OuojGWK6",
+  "tags": []
+}
