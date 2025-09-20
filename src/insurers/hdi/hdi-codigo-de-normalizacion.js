@@ -1,717 +1,675 @@
-// ==========================================
-// ETL NORMALIZACIÓN HDI - CATÁLOGO MAESTRO DE VEHÍCULOS
-// Versión: 2.5 - Corrección completa y limpieza agresiva
-// Fecha: 2025-09-07
-// Autor: Sistema ETL Multi-Aseguradora
-// ==========================================
-
+// src/insurers/hdi/hdi-codigo-de-normalizacion.js
 /**
- * PROPÓSITO:
- * Normalizar datos de vehículos de la aseguradora HDI para integración
- * en catálogo maestro unificado.
+ * HDI ETL - Normalization Code Node
  *
- * CAMBIOS v2.5:
- * - Eliminación AGRESIVA de "CP PUERTAS" y todas sus variantes
- * - Eliminación total de "BASE" en cualquier posición
- * - Eliminación completa de transmisiones (SPEEDSHIFT, MULTITRONIC, etc.)
- * - Eliminación completa de carrocerías de la versión
- * - Orden de limpieza optimizado (eliminar problemáticos primero)
- * - Validación estricta de versiones resultantes
+ * Mirrors the Zurich/Qualitas/Atlas pattern while handling HDI's comma-separated specs:
+ * - Splits `version_original` slots (trim, engine config, displacement, horsepower, doors, transmission, extras).
+ * - Infers transmission codes (AUT, STD, CVT, DSG, etc.) when the `transmision` field is empty.
+ * - Preserves hyphenated trims (A-SPEC, S-LINE, TYPE-S) before cleaning and restores them afterward.
+ * - Normalizes compact engine tokens such as `1.0T` -> `1.0L TURBO` and converts horsepower/door counts.
+ * - Strips comfort/audio tokens while keeping the commercial hash inputs and a clean `version_limpia`.
+ *
+ * Use inside an n8n Code node. Emits a flat array of `{ json }`; validation issues
+ * appear with `{ error: true }` so downstream nodes can log or branch.
  */
-
-const ASEGURADORA = "HDI";
 const crypto = require("crypto");
 
-// ==========================================
-// FUNCIONES DE UTILIDAD GENERAL
-// ==========================================
+const BATCH_SIZE = 5000;
 
-/**
- * Normaliza cualquier texto eliminando acentos y caracteres especiales
- */
-function normalizarTexto(texto) {
-  if (!texto) return "";
-  return texto
-    .toString()
-    .toUpperCase()
+const HDI_NORMALIZATION_DICTIONARY = {
+  brand_aliases: {
+    "GENERAL MOTORS": "GMC",
+    "GENERAL MOTORS 2": "GMC",
+    "GENERAL MOTORS COMPANY": "GMC",
+    "GENERAL MOTORS CORPORATION": "GMC",
+    GMC: "GMC",
+    "JAC SEI": "JAC",
+    "MG ROVER": "MG",
+  },
+  irrelevant_comfort_audio: [
+    "ABS",
+    "CA",
+    "CE",
+    "CD",
+    "CB",
+    "CQ",
+    "SQ",
+    "EQ",
+    "A/A",
+    "A A",
+    "E/E",
+    "E E",
+    "AA",
+    "EE",
+    "B/A",
+    "B A",
+    "Q/C",
+    "Q C",
+    "QC",
+    "BA",
+    "PIEL",
+    "TELA",
+    "VINIL",
+    "ALUMINIO",
+    "ALARM",
+    "ALARMA",
+    "RADIO",
+    "STEREO",
+    "MP3",
+    "DVD",
+    "GPS",
+    "BT",
+    "USB",
+    "NAV",
+    "NAVI",
+    "CAM",
+    "CAMARA",
+    "CAM TRAS",
+    "SENSOR",
+    "SENSORES",
+    "PARK",
+    "PARKTRONIC",
+    "CLIMA",
+    "CLIMATRONIC",
+    "D/T",
+    "D T",
+    "D/V",
+    "D V",
+    "DIS",
+    "PADDLE",
+    "KEYLESS",
+    "PUSH",
+    "START",
+    "BOTON",
+    "ENCENDIDO",
+    "VE",
+    "V.E.",
+    "C/A",
+    "S/D",
+  ],
+  transmission_tokens_to_strip: [
+    "AUT",
+    "AUT.",
+    "AUTO",
+    "AT",
+    "AT.",
+    "AUTOMATICO",
+    "AUTOMATICA",
+    "AUTOMATIC",
+    "AUTOMATIZADO",
+    "AUTOMATIZADA",
+    "TIPTRONIC",
+    "STEPTRONIC",
+    "GEARTRONIC",
+    "MULTITRONIC",
+    "SPORTSHIFT",
+    "S-TRONIC",
+    "S TRONIC",
+    "STRONIC",
+    "Q-TRONIC",
+    "Q TRONIC",
+    "CVT",
+    "DSG",
+    "DCT",
+    "IVT",
+    "SECUENCIAL",
+    "SECUENCIAL.",
+    "SELESPEED",
+    "POWERSHIFT",
+    "TORQUEFLITE",
+    "MANUAL",
+    "MAN",
+    "MAN.",
+    "STD",
+    "STD.",
+    "MECANICO",
+    "MECANICA",
+    "MECA",
+    "MECHANICO",
+  ],
+  cylinder_normalization: {
+    L3: "3CIL",
+    L4: "4CIL",
+    L5: "5CIL",
+    L6: "6CIL",
+    L8: "8CIL",
+    V6: "6CIL",
+    V8: "8CIL",
+    V10: "10CIL",
+    V12: "12CIL",
+    W12: "12CIL",
+    H4: "4CIL",
+    H6: "6CIL",
+    I3: "3CIL",
+    I4: "4CIL",
+    I5: "5CIL",
+    I6: "6CIL",
+    R3: "3CIL",
+    R4: "4CIL",
+    R5: "5CIL",
+    R6: "6CIL",
+    B4: "4CIL",
+    B6: "6CIL",
+  },
+  transmission_normalization: {
+    STD: "MANUAL",
+    "STD.": "MANUAL",
+    MANUAL: "MANUAL",
+    MAN: "MANUAL",
+    "MAN.": "MANUAL",
+    MECA: "MANUAL",
+    MECANICO: "MANUAL",
+    MECANICA: "MANUAL",
+    MECHANICO: "MANUAL",
+    SECUENCIAL: "MANUAL",
+    "SECUENCIAL.": "MANUAL",
+    DRIVELOGIC: "MANUAL",
+    DUALOGIC: "MANUAL",
+    AUT: "AUTO",
+    "AUT.": "AUTO",
+    AUTO: "AUTO",
+    AT: "AUTO",
+    "AT.": "AUTO",
+    AUTOMATICO: "AUTO",
+    AUTOMATICA: "AUTO",
+    AUTOMATIC: "AUTO",
+    AUTOMATIZADO: "AUTO",
+    AUTOMATIZADA: "AUTO",
+    CVT: "AUTO",
+    DSG: "AUTO",
+    "S TRONIC": "AUTO",
+    "S-TRONIC": "AUTO",
+    STRONIC: "AUTO",
+    TIPTRONIC: "AUTO",
+    STEPTRONIC: "AUTO",
+    SELESPEED: "AUTO",
+    "Q-TRONIC": "AUTO",
+    "Q TRONIC": "AUTO",
+    DCT: "AUTO",
+    MULTITRONIC: "AUTO",
+    GEARTRONIC: "AUTO",
+    SPEEDSHIFT: "AUTO",
+    SPORTSHIFT: "AUTO",
+    POWERSHIFT: "AUTO",
+    TORQUEFLITE: "AUTO",
+    IVT: "AUTO",
+  },
+  regex_patterns: {
+    decimal_comma: /(\d),(\d)/g,
+    multiple_spaces: /\s+/g,
+    trim_spaces: /^\s+|\s+$/g,
+    stray_punctuation: /(?<!\d)[\.,;]|[\.,;](?!\d)/g,
+  },
+};
+const PROTECTED_HYPHEN_TOKENS = [
+  {
+    regex: /\bA[\s-]?SPEC\b/gi,
+    placeholder: "__HDI_PROTECTED_A_SPEC__",
+    canonical: "A-SPEC",
+  },
+  {
+    regex: /\bTYPE[\s-]?S\b/gi,
+    placeholder: "__HDI_PROTECTED_TYPE_S__",
+    canonical: "TYPE-S",
+  },
+  {
+    regex: /\bTYPE[\s-]?R\b/gi,
+    placeholder: "__HDI_PROTECTED_TYPE_R__",
+    canonical: "TYPE-R",
+  },
+  {
+    regex: /\bTYPE[\s-]?F\b/gi,
+    placeholder: "__HDI_PROTECTED_TYPE_F__",
+    canonical: "TYPE-F",
+  },
+  {
+    regex: /\bS[\s-]?LINE\b/gi,
+    placeholder: "__HDI_PROTECTED_S_LINE__",
+    canonical: "S-LINE",
+  },
+];
+
+function applyProtectedTokens(value = "") {
+  let output = value;
+  PROTECTED_HYPHEN_TOKENS.forEach(({ regex, placeholder }) => {
+    output = output.replace(regex, placeholder);
+  });
+  return output;
+}
+
+function restoreProtectedTokens(value = "") {
+  let output = value;
+  PROTECTED_HYPHEN_TOKENS.forEach(({ placeholder, canonical }) => {
+    const placeholderRegex = new RegExp(placeholder, "g");
+    output = output.replace(placeholderRegex, canonical);
+  });
+  return output;
+}
+
+
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeDrivetrain(versionString = "") {
+  return versionString
+    .replace(/\bALL[-\s]?WHEEL DRIVE\b/g, "AWD")
+    .replace(/\b4MATIC\b/g, "AWD")
+    .replace(/\bQUATTRO\b/g, "AWD")
+    .replace(/\bTRACCION\s+TOTAL\b/g, "AWD")
+    .replace(/\bAWD\b/g, "AWD")
+    .replace(/\b4\s*X\s*4\b/g, "4WD")
+    .replace(/\b4\s*WD\b/g, "4WD")
+    .replace(/\b4\s*WHEEL DRIVE\b/g, "4WD")
+    .replace(/\bTRACCION\s+4X4\b/g, "4WD")
+    .replace(/\bFRONT[-\s]?WHEEL DRIVE\b/g, "FWD")
+    .replace(/\bTRACCION\s+DELANTERA\b/g, "FWD")
+    .replace(/\bFWD\b/g, "FWD")
+    .replace(/\bREAR[-\s]?WHEEL DRIVE\b/g, "RWD")
+    .replace(/\bTRACCION\s+TRASERA\b/g, "RWD")
+    .replace(/\b4\s*X\s*2\b/g, "RWD")
+    .replace(/\b2WD\b/g, "RWD")
+    .replace(/\bRWD\b/g, "RWD");
+}
+
+function normalizeCylinders(versionString = "") {
+  if (!versionString || typeof versionString !== "string") return "";
+  let normalized = versionString;
+  Object.entries(HDI_NORMALIZATION_DICTIONARY.cylinder_normalization).forEach(
+    ([from, to]) => {
+      const regex = new RegExp(`\\b${escapeRegExp(from)}\\b`, "g");
+      normalized = normalized.replace(regex, to);
+    }
+  );
+  return normalized;
+}
+
+function normalizeEngineDisplacement(versionString = "") {
+  if (!versionString || typeof versionString !== "string") return "";
+  return versionString
+    .replace(/\b(\d)(\d)L\b/g, "$1.$2L")
+    .replace(/\b(?<!\d\.)\d+L\b/g, (match) => `${match.slice(0, -1)}.0L`)
+    .replace(/\b(?<!\d\.)\d+\s+L\b/g, (match) => {
+      const digits = match.match(/\d+/)[0];
+      return `${digits}.0L`;
+    });
+}
+
+function normalizeStandaloneLiters(versionString = "") {
+  if (!versionString || typeof versionString !== "string") return "";
+  return versionString.replace(/\b(\d+\.\d+)(?!L\b)(?!\d)(?![A-Z])/g, (match) => {
+    const liters = parseFloat(match);
+    if (!Number.isFinite(liters) || liters <= 0 || liters > 10) return match;
+    return `${match}L`;
+  });
+}
+
+function normalizeHorsepower(versionString = "") {
+  if (!versionString || typeof versionString !== "string") return "";
+  return versionString
+    .replace(/\b(\d+)\s*C\.P\.?\b/g, "$1HP")
+    .replace(/\b(\d+)\s*CP\b/g, "$1HP")
+    .replace(/\b(\d+)\s*H\.P\.?\b/g, "$1HP")
+    .replace(/\b(\d+)\s*HP\b/g, "$1HP");
+}
+
+function normalizeTurboTokens(versionString = "") {
+  if (!versionString || typeof versionString !== "string") return "";
+  return versionString
+    .replace(/\bTBO\b/g, "TURBO")
+    .replace(/\bBI[-\s]?TURBO\b/g, "BITURBO")
+    .replace(/\bTWIN[-\s]?TURBO\b/g, "TWIN TURBO")
+    .replace(/\bT\/T\b/g, "TWIN TURBO");
+}
+
+function normalizeTurboSuffix(versionString = "") {
+  if (!versionString || typeof versionString !== "string") return "";
+  return versionString
+    .replace(/\b(\d+\.\d+)T\b/g, "$1L TURBO")
+    .replace(/\b(\d+\.\d+)\s*T\b/g, "$1L TURBO");
+}
+
+function normalizeTonCapacity(versionString = "") {
+  if (!versionString || typeof versionString !== "string") return "";
+  return versionString.replace(
+    /\b(\d+(?:\.\d+)?)\s*TON\b/g,
+    (_, value) => `${value}TON`
+  );
+}
+
+function stripLeadingPhrases(text, phrases = []) {
+  let cleaned = text.trim();
+  phrases.forEach((phrase) => {
+    if (!phrase) return;
+    const normalized = phrase
+      .toString()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalized) return;
+    const variations = [normalized, normalized.replace(/\s+/g, "")];
+    let changed = true;
+    while (changed && cleaned) {
+      changed = false;
+      for (const variant of variations) {
+        if (!variant) continue;
+        if (cleaned === variant) {
+          cleaned = "";
+          changed = true;
+        } else if (cleaned.startsWith(`${variant} `)) {
+          cleaned = cleaned.slice(variant.length).trimStart();
+          changed = true;
+        }
+      }
+    }
+  });
+  return cleaned.trim();
+}
+
+function normalizeBrand(value = "") {
+  if (!value) return "";
+  const normalized = value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Z0-9\s-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Limpia texto preservando algunos caracteres necesarios
- */
-function limpiarTextoCompleto(texto) {
-  if (!texto) return "";
-
-  return texto
-    .replace(/["""'''`´¨]/g, "")
-    .replace(/["']/g, "")
-    .replace(/[\u0022\u0027]/g, "")
-    .replace(/[\u201C\u201D\u2018\u2019]/g, "")
-    .replace(/[\u00AB\u00BB]/g, "")
-    .replace(/\\/g, "/")
-    .replace(/[()]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Genera hash SHA-256 para identificación única
- */
-function generarHash(...componentes) {
-  const texto = componentes
-    .filter((c) => c)
-    .join("|")
+    .trim()
     .toUpperCase();
-  return crypto.createHash("sha256").update(texto).digest("hex");
+  const mapped = HDI_NORMALIZATION_DICTIONARY.brand_aliases[normalized];
+  return (mapped || normalized).trim();
 }
 
-// ==========================================
-// NORMALIZACIÓN DE MARCA
-// ==========================================
-
-/**
- * Normaliza nombres de marcas aplicando sinónimos
- */
-function normalizarMarca(marca) {
-  if (!marca) return "";
-  let marcaNorm = normalizarTexto(marca);
-
-  const sinonimos = {
-    VOLKSWAGEN: ["VW", "VOLKSWAGEN", "VOLKS WAGEN"],
-    "MERCEDES BENZ": [
-      "MERCEDES",
-      "MERCEDES-BENZ",
-      "MERCEDES BENZ",
-      "MB",
-      "MERCEDEZ",
-    ],
-    CHEVROLET: ["CHEVROLET", "CHEVY", "CHEV"],
-    MINI: ["MINI COOPER", "MINI", "COOPER"],
-    "LAND ROVER": ["LAND ROVER", "LANDROVER", "LAND-ROVER"],
-    "ALFA ROMEO": ["ALFA", "ALFA ROMEO", "ALFAROMEO"],
-    GMC: ["GMC", "GM", "GENERAL MOTORS"],
-    BMW: ["BMW", "BAYERISCHE MOTOREN WERKE"],
-    MAZDA: ["MAZDA", "MATSUDA"],
-    KIA: ["KIA", "KIA MOTORS"],
-    HYUNDAI: ["HYUNDAI", "HYNDAI", "HUNDAI"],
-    MITSUBISHI: ["MITSUBISHI", "MITSIBUSHI", "MITS"],
-    NISSAN: ["NISSAN", "NISAN", "DATSUN"],
-    PEUGEOT: ["PEUGEOT", "PEUGOT", "PEUGEOUT"],
-    RENAULT: ["RENAULT", "RENOLT", "RENO"],
-    SUBARU: ["SUBARU", "SUBAROO"],
-    SUZUKI: ["SUZUKI", "SUSUKI"],
-    TOYOTA: ["TOYOTA", "TOYOTTA"],
-    RAM: ["RAM", "DODGE RAM"],
-    SEAT: ["SEAT", "CUPRA"],
-  };
-
-  for (const [marcaEstandar, variantes] of Object.entries(sinonimos)) {
-    if (variantes.includes(marcaNorm)) {
-      return marcaEstandar;
-    }
-  }
-
-  return marcaNorm;
+function normalizeText(value) {
+  return value
+    ? value
+        .toString()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim()
+        .toUpperCase()
+    : "";
 }
 
-/**
- * Normaliza nombres de modelos eliminando redundancias y equipamiento
- */
-function normalizarModelo(modelo, marca) {
-  if (!modelo) return "";
+function cleanVersionString(versionString, marca = "", modelo = "") {
+  if (!versionString || typeof versionString !== "string") return "";
 
-  let modeloNorm = normalizarTexto(modelo);
-  const marcaNorm = normalizarTexto(marca);
-
-  // Eliminar marca del modelo si está presente
-  if (marcaNorm && modeloNorm.startsWith(marcaNorm)) {
-    modeloNorm = modeloNorm.substring(marcaNorm.length).trim();
-  }
-
-  // Limpiar paréntesis y contenido
-  modeloNorm = modeloNorm.replace(/\([^)]*\)/g, "").trim();
-
-  // Eliminar equipamiento que no debería estar en modelo
-  modeloNorm = modeloNorm
-    .replace(/\b(DVD|CD|GPS|NAV|NAVIGATION|BT|BLUETOOTH)\b/gi, "")
+  let cleaned = versionString
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/"/g, " ")
     .trim();
-  modeloNorm = modeloNorm.replace(/\b(AA|AC|A\/C|EE|E\/E)\b/gi, "").trim();
+  cleaned = applyProtectedTokens(cleaned);
 
-  // Limpiar espacios múltiples resultantes
-  modeloNorm = modeloNorm.replace(/\s+/g, " ").trim();
+  cleaned = cleaned.replace(
+    HDI_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
+    "$1.$2"
+  );
+  cleaned = stripLeadingPhrases(cleaned, [marca, modelo]);
 
-  return modeloNorm;
+  cleaned = cleaned.replace(/[,/]/g, " ");
+  cleaned = cleaned.replace(/-/g, " ");
+  cleaned = cleaned.replace(/(\d)([A-Z])/g, "$1 $2");
+  cleaned = cleaned.replace(/([A-Z])(\d)/g, "$1 $2");
+  cleaned = cleaned.replace(
+    /\b([A-Z0-9]+)(AUT|MAN|STD|CVT|DSG|DCT|IVT|TIPTRONIC)\b/g,
+    "$1 $2"
+  );
+  cleaned = cleaned.replace(/\bHB\b/g, "HATCHBACK");
+  cleaned = cleaned.replace(/\b(V|L|R|H|I|B)\s+(\d{1,2})\b/g, "$1$2");
+  cleaned = cleaned.replace(/\b(\d{1,2})\s+CIL\b/g, "$1CIL");
+  cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s+L\b/g, "$1L");
+
+  cleaned = normalizeTonCapacity(cleaned);
+  cleaned = normalizeDrivetrain(cleaned);
+  cleaned = normalizeCylinders(cleaned);
+  cleaned = normalizeEngineDisplacement(cleaned);
+  cleaned = normalizeStandaloneLiters(cleaned);
+  cleaned = normalizeTurboSuffix(cleaned);
+  cleaned = normalizeHorsepower(cleaned);
+  cleaned = normalizeTurboTokens(cleaned);
+
+  HDI_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.forEach((token) => {
+    const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
+    cleaned = cleaned.replace(regex, " ");
+  });
+
+  HDI_NORMALIZATION_DICTIONARY.transmission_tokens_to_strip.forEach((token) => {
+    const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
+    cleaned = cleaned.replace(regex, " ");
+  });
+
+  cleaned = cleaned.replace(/\s*\/\s*/g, " ");
+  cleaned = cleaned.replace(
+    HDI_NORMALIZATION_DICTIONARY.regex_patterns.stray_punctuation,
+    " "
+  );
+  cleaned = cleaned.replace(
+    HDI_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
+    " "
+  );
+  cleaned = cleaned.replace(
+    HDI_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces,
+    ""
+  );
+  cleaned = restoreProtectedTokens(cleaned);
+
+  return cleaned;
 }
 
-// ==========================================
-// NORMALIZACIÓN DE TRANSMISIÓN
-// ==========================================
-
-/**
- * Normaliza transmisión usando campo dedicado o detección por texto
- */
-function normalizarTransmision(codigo, textoTransmision, versionTexto) {
-  // Prioridad 1: Campo dedicado de transmisión
-  if (textoTransmision) {
-    const trans = normalizarTexto(textoTransmision);
-
-    // Automáticas
-    if (["AUT", "AUTOMATICA", "AUTO", "AUTOMATIC", "ATD"].includes(trans))
-      return "AUTO";
-    if (
-      ["CVT", "DSG", "PDK", "DCT", "STRONIC", "TRONIC", "9G TRONIC"].includes(
-        trans
-      )
-    )
-      return "AUTO";
-    if (["TIP", "TIPTRONIC", "S-TRONIC", "DUALOGIC"].includes(trans))
-      return "AUTO";
-    if (["AUTOMATICA ECVT", "ASG", "HSD"].includes(trans)) return "AUTO";
-
-    // Manuales
-    if (["STD", "STANDARD", "ESTANDAR", "MANUAL", "MAN"].includes(trans))
-      return "MANUAL";
-    if (["SEL", "SELESPEED", "GEA", "MUT", "MUL"].includes(trans))
-      return "MANUAL";
-    if (trans === "S/A") return "MANUAL"; // Sin Aire = Manual en HDI
+function extractDoorsAndOccupants(versionOriginal = "") {
+  if (!versionOriginal || typeof versionOriginal !== "string") {
+    return { doors: "", occupants: "" };
   }
+  const normalized = versionOriginal
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[,/]/g, " ");
 
-  // Prioridad 2: Detectar en texto de versión
-  if (versionTexto) {
-    const texto = normalizarTexto(versionTexto);
+  const doorsMatch = normalized.match(
+    /\b(\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/
+  );
+  const occMatch = normalized.match(/\b0?(\d{1,2})\s*OCUP\b/);
 
-    // Buscar patrones de automática
-    if (/\b(AUT|AUTO|AUTOMATIC|CVT|DSG|PDK|DCT|TIPTRONIC)\b/.test(texto))
-      return "AUTO";
-    if (/\b(STRONIC|TRONIC|DUALOGIC|ASG)\b/.test(texto)) return "AUTO";
+  const doors = doorsMatch ? `${doorsMatch[1]}PUERTAS` : "";
+  const occupants =
+    occMatch && !Number.isNaN(parseInt(occMatch[1], 10))
+      ? `${parseInt(occMatch[1], 10)}OCUP`
+      : "";
 
-    // Buscar patrones de manual
-    if (/\b(STD|STANDARD|MANUAL|MAN|ESTANDAR)\b/.test(texto)) return "MANUAL";
-    if (/\b(SELESPEED|SEL)\b/.test(texto)) return "MANUAL";
-  }
-
-  return null;
+  return { doors, occupants };
 }
 
-// ==========================================
-// EXTRACCIÓN Y NORMALIZACIÓN DE VERSIÓN
-// ==========================================
-
-/**
- * Extrae el trim/versión limpio del campo VersionCorta de HDI
- *
- * CAMBIO v2.5: Limpieza AGRESIVA y orden optimizado
- */
-function normalizarVersion(versionCorta) {
-  if (!versionCorta) return "";
-
-  let texto = limpiarTextoCompleto(versionCorta);
-  texto = normalizarTexto(texto);
-
-  // === PASO 1: ELIMINAR PATRONES PROBLEMÁTICOS PRIMERO ===
-
-  // Eliminar "BASE" y cualquier cosa que le siga
-  texto = texto.replace(/\bBASE\s+CP\s+PUERTAS?\b/gi, "");
-  texto = texto.replace(/\bBASE\s+CP\b/gi, "");
-  texto = texto.replace(/\bBASE\s+\w+/gi, "");
-  texto = texto.replace(/\bBASE\b/gi, "");
-
-  // Eliminar "CP PUERTAS" y todas sus variantes
-  texto = texto.replace(/\b\d+\s*CP\s+PUERTAS?\b/gi, "");
-  texto = texto.replace(/\bCP\s+PUERTAS?\b/gi, "");
-  texto = texto.replace(/\b\d+\s*CP\b/gi, "");
-  texto = texto.replace(/\bCP\b/gi, "");
-
-  // Eliminar números seguidos de PUERTAS/PTS/P
-  texto = texto.replace(/\b\d+\s*PUERTAS?\b/gi, "");
-  texto = texto.replace(/\b\d+\s*PTS?\b/gi, "");
-  texto = texto.replace(/\b\d+P\b/gi, "");
-  texto = texto.replace(/\bSEDAN\s*\d+P/gi, "");
-  texto = texto.replace(/\bSEDAN\s*\d+\s*PTS?/gi, "");
-
-  // === PASO 2: ELIMINAR CARROCERÍAS ===
-  texto = texto.replace(/\b(SEDAN|COUPE|SUV|HATCHBACK|HB)\b/gi, "");
-  texto = texto.replace(/\b(CONVERTIBLE|CABRIO|ROADSTER|SPIDER)\b/gi, "");
-  texto = texto.replace(/\b(PICKUP|PICK UP|VAN|WAGON|ESTATE)\b/gi, "");
-  texto = texto.replace(/\b(CROSSOVER|MINIVAN|SPORTBACK)\b/gi, "");
-  texto = texto.replace(/\b(PANEL|CHASIS|CHASSIS|CARGA)\b/gi, "");
-
-  // === PASO 3: ELIMINAR TRANSMISIONES Y VARIANTES ===
-  // Transmisiones específicas primero
-  texto = texto.replace(
-    /\b(SPEEDSHIFT|MULTITRONIC|TIPTRONIC|STEPTRONIC)\b/gi,
-    ""
+function normalizeTransmission(transmissionCode) {
+  if (!transmissionCode || typeof transmissionCode !== "string") return "";
+  const normalized = transmissionCode
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .trim();
+  return (
+    HDI_NORMALIZATION_DICTIONARY.transmission_normalization[normalized] ||
+    normalized
   );
-  texto = texto.replace(
-    /\b(S[\s-]?TRONIC|STRONIC|SPORTMATIC|GEARTRONIC)\b/gi,
-    ""
-  );
-  texto = texto.replace(
-    /\b(DSG|CVT|CVTF|DCT|PDK|AMT|SMG|XTRONIC|POWERSHIFT)\b/gi,
-    ""
-  );
-  texto = texto.replace(
-    /\b(DUALOGIC|EASYTRONIC|DRIVELOGIC|SPORTSHIFT)\b/gi,
-    ""
-  );
-  texto = texto.replace(
-    /\b(7[\s-]?G[\s-]?TRONIC|9[\s-]?G[\s-]?TRONIC|G[\s-]?TRONIC)\b/gi,
-    ""
-  );
+}
 
-  // Transmisiones genéricas
-  texto = texto.replace(/\b(AUTOMATICA|AUTOMATIC|AUTO|AUT|AT)\b/gi, "");
-  texto = texto.replace(/\b(MANUAL|ESTANDAR|STD|EST|MAN|MT)\b/gi, "");
-  texto = texto.replace(/\b(SELESPEED|SEL|GEA|MUT|MUL|ASG|HSD)\b/gi, "");
-
-  // Velocidades
-  texto = texto.replace(
-    /\b\d+\s*(VEL|VELOCIDADES?|SPEED|SPD|CAMBIOS?|MARCHAS?)\b/gi,
-    ""
-  );
-  texto = texto.replace(/\bAT\d*\b/gi, "");
-
-  // === PASO 4: ELIMINAR ESPECIFICACIONES DE MOTOR ===
-  texto = texto.replace(/\b[VIL]?\d+[VIL]?\b/gi, "");
-  texto = texto.replace(/\b\d+\.?\d*[LT]\b/gi, "");
-  texto = texto.replace(/\b\d+\.?\d*\s*L(ITROS?|TS?)?\b/gi, "");
-  texto = texto.replace(/\b\d+\s*(CC|CM3|CILINDROS?|CYL|CIL)\b/gi, "");
-  texto = texto.replace(/\b(TURBO|BITURBO|TWINTURBO|TSI|TDI|TFSI|FSI)\b/gi, "");
-  texto = texto.replace(/\b(VTEC|VVTI|VVT-I|MIVEC|SKYACTIV)\b/gi, "");
-
-  // === PASO 5: ELIMINAR POTENCIA ===
-  texto = texto.replace(/\b\d+\s*(HP|CV|CP|BHP|PS|KW)\b/gi, "");
-  texto = texto.replace(/\b\d+\s*(CABALLOS?|HORSES?)\b/gi, "");
-
-  // === PASO 6: ELIMINAR TRACCIÓN ===
-  texto = texto.replace(/\b(AWD|4WD|4X4|4X2|FWD|RWD|2WD)\b/gi, "");
-  texto = texto.replace(/\b(QUATTRO|XDRIVE|4MATIC|4MOTION|ALL4)\b/gi, "");
-  texto = texto.replace(/\b(TRACCION\s*(DELANTERA|TRASERA|INTEGRAL))\b/gi, "");
-
-  // === PASO 7: ELIMINAR COMBUSTIBLE ===
-  texto = texto.replace(
-    /\b(DIESEL|GASOLINA|HIBRIDO|HYBRID|ELECTRICO|ELECTRIC|EV)\b/gi,
-    ""
-  );
-  texto = texto.replace(/\b(TDI|HDI|CRDI|CDTI|DCI|BLUEHDI)\b/gi, "");
-
-  // === PASO 8: ELIMINAR OCUPANTES ===
-  texto = texto.replace(
-    /\b\d+\s*(PASAJEROS?|OCUPANTES?|PLAZAS?|ASIENTOS?|PAX|PAS)\b/gi,
-    ""
-  );
-  texto = texto.replace(/\bPASAJEROS?\b/gi, "");
-
-  // === PASO 9: ELIMINAR EQUIPAMIENTO ===
-  texto = texto.replace(
-    /\b(AA|AC|A\/C|EE|E\/E|BA|CD|DVD|GPS|NAV|BT|BLUETOOTH)\b/gi,
-    ""
-  );
-  texto = texto.replace(/\b(VDC|ABS|EBD|ESP|TCS|VSC|DSC)\b/gi, "");
-  texto = texto.replace(/\b(DH|TA|VENTANAS?|QC)\b/gi, "");
-  texto = texto.replace(/\bR\d{2}\b/gi, "");
-
-  // === PASO 10: ELIMINAR PALABRAS FUNCIONALES ===
-  texto = texto.replace(/\b(AMPLIA|TOLDO\s*ALTO)\b/gi, "");
-  texto = texto.replace(/\b(AMBULANCIA)\b/gi, ""); // Mover a carrocería, no versión
-
-  // === LIMPIEZA FINAL ===
-  texto = texto.replace(/,/g, " ");
-  texto = texto.replace(/\s+/g, " ").trim();
-
-  // === VALIDACIÓN ===
-
-  // Si quedó vacío o es solo números/una letra
-  if (!texto || texto.match(/^\d+$/) || texto.match(/^[A-Z]$/)) {
-    return "";
-  }
-
-  // Si es una palabra sospechosa sola
-  const palabrasInvalidas = ["CIL", "CILINDROS", "PASAJEROS", "CARGA"];
-  if (palabrasInvalidas.includes(texto)) {
-    return "";
-  }
-
-  // Lista de trims válidos conocidos (sin BASE)
-  const trimsValidos = new Set([
-    // Niveles de equipamiento comunes
-    "EXCLUSIVE",
-    "ADVANCE",
-    "SENSE",
-    "SR",
-    "GL",
-    "GLS",
-    "GLX",
-    "GT",
-    "GTI",
-    "GTS",
-    "SPORT",
-    "DEPORTIVO",
-    "ELEGANCE",
-    "LUXURY",
-    "LIMITED",
-    "PREMIUM",
-    "ULTIMATE",
-    "PLATINUM",
-    "S",
-    "SE",
-    "SEL",
-    "SL",
-    "SLE",
-    "SLT",
-    "SV",
-    "LE",
-    "LT",
-    "LTZ",
-    "LS",
-    "LSX",
-    "LX",
-    "LXI",
-    "EX",
-    "EXL",
-    "DX",
-    "DXL",
-    "RS",
-    "RST",
-    // Nombres específicos
-    "LATITUDE",
-    "LONGITUDE",
-    "ALTITUDE",
-    "CLASSIC",
-    "COMFORT",
-    "DYNAMIC",
-    "PRESTIGE",
-    "ACTIVE",
-    "ALLURE",
-    "FELINE",
-    "GRIFFE",
-    "TRENDLINE",
-    "COMFORTLINE",
-    "HIGHLINE",
-    "STYLE",
-    "XCELLENCE",
-    "FR",
-    "LIFE",
-    "INTENS",
-    "ZEN",
-    "INTENSE",
-    "ACCESS",
-    "PLAY",
-    "ICON",
-    "TECHNO",
-    "ESSENTIAL",
-    "EVOLUTION",
-    "EXCELLENCE",
-    "REFERENCE",
-    "STYLE PLUS",
-    "XCELLENCE PLUS",
-    "AMBITION",
-    "ELEGANCE",
-    "LAURIN KLEMENT",
-    "SCOUT",
-    "MONTE CARLO",
-    "SPORTLINE",
-    "ACTIVE PLUS",
-    "AMBITION PLUS",
-    "STYLE PLUS",
-    "INSPIRE",
-    "REFINE",
-    // Performance
-    "AMG",
-    "M",
-    "RS",
-    "GTI",
-    "ST",
-    "SRT",
-    "SS",
-    "R",
-    "JOHN COOPER WORKS",
-    "JCW",
-    "ABARTH",
-    // Ediciones especiales
-    "ANNIVERSARY",
-    "EDITION",
-    "SPECIAL",
-    "BLACK",
-    "WHITE",
-  ]);
-
-  // Buscar trim válido
-  const palabras = texto.split(" ").filter((p) => p.length > 0);
-
-  // Si es un trim conocido exacto
-  if (trimsValidos.has(texto)) {
-    return texto;
-  }
-
-  // Verificar trims compuestos (2-3 palabras)
-  for (let i = 0; i < palabras.length - 2; i++) {
-    const compuesto3 = `${palabras[i]} ${palabras[i + 1]} ${palabras[i + 2]}`;
-    if (trimsValidos.has(compuesto3)) {
-      return compuesto3;
+function inferTransmissionFromVersion(versionOriginal = "") {
+  if (!versionOriginal || typeof versionOriginal !== "string") return "";
+  const normalized = versionOriginal
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+  for (const token of Object.keys(
+    HDI_NORMALIZATION_DICTIONARY.transmission_normalization
+  )) {
+    const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
+    if (regex.test(normalized)) {
+      return HDI_NORMALIZATION_DICTIONARY.transmission_normalization[token];
     }
   }
-
-  for (let i = 0; i < palabras.length - 1; i++) {
-    const compuesto2 = `${palabras[i]} ${palabras[i + 1]}`;
-    if (trimsValidos.has(compuesto2)) {
-      return compuesto2;
-    }
-  }
-
-  // Buscar trim simple válido
-  for (const palabra of palabras) {
-    if (trimsValidos.has(palabra)) {
-      return palabra;
-    }
-  }
-
-  // Si contiene AMG pero no otras cosas problemáticas
-  if (texto.includes("AMG") && !texto.match(/\d/)) {
-    return "AMG";
-  }
-
-  // Si es una sola palabra razonable (2-15 caracteres)
-  if (
-    palabras.length === 1 &&
-    palabras[0].length >= 2 &&
-    palabras[0].length <= 15
-  ) {
-    // Excluir S sola si no está en la lista de válidos
-    if (palabras[0] === "S") return "S";
-    if (!palabras[0].match(/^(AT|MT|CVT|DSG)$/)) {
-      return palabras[0];
-    }
-  }
-
-  // Si son 2-3 palabras y parecen un trim compuesto
-  if (palabras.length >= 2 && palabras.length <= 3) {
-    const trimFinal = palabras.join(" ");
-    // Verificar que no contenga palabras problemáticas
-    if (!trimFinal.match(/\b(AT|MT|CVT|DSG|SEDAN|COUPE|SUV)\b/)) {
-      return trimFinal;
-    }
-  }
-
   return "";
 }
 
-// ==========================================
-// EXTRACCIÓN DE ESPECIFICACIONES TÉCNICAS
-// ==========================================
+function dedupeTokens(value = "") {
+  if (!value) return "";
+  const tokens = value.split(" ").filter(Boolean);
+  const seen = new Set();
+  const deduped = [];
+  tokens.forEach((token) => {
+    const formatted = token.trim();
+    if (!formatted) return;
+    if (formatted.length === 1 && !/\d/.test(formatted)) return;
+    if (!seen.has(formatted)) {
+      seen.add(formatted);
+      deduped.push(formatted);
+    }
+  });
+  return deduped.join(" ");
+}
 
-/**
- * Extrae especificaciones técnicas del campo VersionCorta de HDI
- */
-function extraerEspecificaciones(versionCorta, numeroOcupantesOriginal) {
-  const texto = normalizarTexto(versionCorta || "");
-  const specs = {
-    configuracion_motor: null,
-    cilindrada_l: null,
-    traccion: null,
-    tipo_carroceria: null,
-    numero_ocupantes: null,
+function validateRecord(record) {
+  const errors = [];
+  const year = Number(record.anio);
+
+  if (!record.marca || record.marca.toString().trim() === "") {
+    errors.push("marca is required");
+  }
+  if (!record.modelo || record.modelo.toString().trim() === "") {
+    errors.push("modelo is required");
+  }
+  if (!Number.isInteger(year) || year < 2000 || year > 2030) {
+    errors.push("anio must be between 2000-2030");
+  } else {
+    record.anio = year;
+  }
+  if (
+    !record.version_original ||
+    record.version_original.toString().trim() === ""
+  ) {
+    errors.push("version is required");
+  }
+  if (!record.transmision || record.transmision.toString().trim() === "") {
+    errors.push("transmision is required");
+  }
+
+  return { isValid: errors.length === 0, errors };
+}
+
+function categorizeError(error) {
+  const message = error.message.toLowerCase();
+  if (message.includes("validation")) return "VALIDATION_ERROR";
+  if (message.includes("hash")) return "HASH_GENERATION_ERROR";
+  return "NORMALIZATION_ERROR";
+}
+
+function createCommercialHash(vehicle) {
+  const key = [
+    vehicle.marca || "",
+    vehicle.modelo || "",
+    vehicle.anio ? vehicle.anio.toString() : "",
+    vehicle.transmision || "",
+  ]
+    .join("|")
+    .toLowerCase()
+    .trim();
+
+  return crypto.createHash("sha256").update(key).digest("hex");
+}
+
+function processHdiRecord(record) {
+  const derivedTransmission =
+    normalizeTransmission(record.transmision) ||
+    inferTransmissionFromVersion(record.version_original);
+
+  record.transmision = derivedTransmission;
+
+  const marcaNormalizada = normalizeBrand(record.marca || "");
+  const modeloNormalizado = normalizeText(record.modelo || "");
+
+  const { doors, occupants } = extractDoorsAndOccupants(
+    record.version_original || ""
+  );
+
+  const validation = validateRecord({
+    ...record,
+    marca: marcaNormalizada,
+    modelo: modeloNormalizado,
+  });
+  if (!validation.isValid) {
+    throw new Error(`Validation failed: ${validation.errors.join(", ")}`);
+  }
+
+  let versionLimpia = cleanVersionString(
+    record.version_original || "",
+    marcaNormalizada,
+    modeloNormalizado
+  );
+
+  versionLimpia = versionLimpia
+    .replace(/\b\d\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/gi, " ")
+    .replace(/\b0?\d+\s*OCUP\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  versionLimpia = dedupeTokens(
+    [versionLimpia, doors, occupants].filter(Boolean).join(" ").trim()
+  );
+
+  if (!versionLimpia) {
+    throw new Error("Normalization produced empty version_limpia");
+  }
+
+  const normalized = {
+    origen_aseguradora: "HDI",
+    id_original: record.id_original,
+    marca: marcaNormalizada,
+    modelo: modeloNormalizado,
+    anio: record.anio,
+    transmision: record.transmision,
+    version_original: record.version_original,
+    version_limpia: versionLimpia,
+    fecha_procesamiento: new Date().toISOString(),
   };
 
-  // === Número de ocupantes/pasajeros ===
-  const ocupantesMatch = texto.match(
-    /(\d+)\s*(PASAJEROS?|OCUPANTES?|PLAZAS?|ASIENTOS?|PAX|PAS)\b/i
-  );
-  if (ocupantesMatch) {
-    const ocupantes = parseInt(ocupantesMatch[1]);
-    if (ocupantes >= 2 && ocupantes <= 23) {
-      specs.numero_ocupantes = ocupantes;
-    }
-  }
+  normalized.hash_comercial = createCommercialHash(normalized);
+  return normalized;
+}
 
-  // === Configuración de Motor ===
-  const motorMatch = texto.match(/\b([VIL]\d+[VILT]?)\b/i);
-  if (motorMatch) {
-    specs.configuracion_motor = motorMatch[1].toUpperCase();
-  }
+function normalizeHdiData(records = []) {
+  const results = [];
+  const errors = [];
 
-  if (!specs.configuracion_motor) {
-    const motorSimple = texto.match(/\b([LV]\d)\b/i);
-    if (motorSimple) {
-      specs.configuracion_motor = motorSimple[1].toUpperCase();
-    }
-  }
-
-  // Detectar turbo
-  if (/\b(TURBO|BITURBO|TWINTURBO|TSI|TDI|TFSI)\b/i.test(texto)) {
-    specs.configuracion_motor = specs.configuracion_motor
-      ? `${specs.configuracion_motor} TURBO`
-      : "TURBO";
-  }
-
-  // === Cilindrada ===
-  const cilindradaMatch = texto.match(/(\d+\.?\d*)\s*[LT]\b/i);
-  if (cilindradaMatch) {
-    const cilindrada = parseFloat(cilindradaMatch[1]);
-    // Validar rango razonable
-    if (cilindrada >= 0.5 && cilindrada < 8.0) {
-      specs.cilindrada_l = cilindrada;
-    } else if (cilindrada === 8.0 && texto.includes("8.0L")) {
-      // Solo aceptar 8.0L si está explícitamente escrito
-      specs.cilindrada_l = cilindrada;
-    }
-  }
-
-  // === Tracción ===
-  if (/\b(AWD|ALL\s*WHEEL|QUATTRO|XDRIVE|4MATIC)\b/i.test(texto)) {
-    specs.traccion = "AWD";
-  } else if (/\b(4X4|4WD|FOUR\s*WHEEL)\b/i.test(texto)) {
-    specs.traccion = "4X4";
-  } else if (/\b(FWD|FRONT\s*WHEEL|TRACCION\s*DELANTERA)\b/i.test(texto)) {
-    specs.traccion = "FWD";
-  } else if (/\b(RWD|REAR\s*WHEEL|TRACCION\s*TRASERA)\b/i.test(texto)) {
-    specs.traccion = "RWD";
-  }
-
-  // === Tipo de Carrocería ===
-  // Incluir AMBULANCIA como tipo de carrocería especial
-  if (/\b(AMBULANCIA)\b/i.test(texto)) {
-    specs.tipo_carroceria = "VAN"; // Ambulancia es tipo VAN
-  } else if (/\b(PICK\s*UP|TRUCK|CAMIONETA)\b/i.test(texto)) {
-    specs.tipo_carroceria = "PICKUP";
-  } else if (/\b(CHASIS\s*CABINA|CHASSIS)\b/i.test(texto)) {
-    specs.tipo_carroceria = "CHASSIS";
-  } else if (/\b(PANEL|CARGO\s*VAN|VAN)\b/i.test(texto)) {
-    specs.tipo_carroceria = "VAN";
-  } else if (/\b(SUV|SPORT\s*UTILITY|CROSSOVER|CUV)\b/i.test(texto)) {
-    specs.tipo_carroceria = "SUV";
-  } else if (/\b(SEDAN|BERLINE|SALOON)\b/i.test(texto)) {
-    specs.tipo_carroceria = "SEDAN";
-  } else if (/\b(HATCHBACK|HB|COMPACTO)\b/i.test(texto)) {
-    specs.tipo_carroceria = "HATCHBACK";
-  } else if (/\b(COUPE|COUP[EÉ])\b/i.test(texto)) {
-    specs.tipo_carroceria = "COUPE";
-  } else if (/\b(CONVERTIBLE|CABRIO|ROADSTER)\b/i.test(texto)) {
-    specs.tipo_carroceria = "CONVERTIBLE";
-  } else if (/\b(WAGON|ESTATE|FAMILIAR|TOURER)\b/i.test(texto)) {
-    specs.tipo_carroceria = "WAGON";
-  } else {
-    // Intentar inferir por número de puertas
-    const puertasMatch = texto.match(/(\d+)\s*PUERTAS?/i);
-    if (puertasMatch) {
-      const puertas = parseInt(puertasMatch[1]);
-      if (puertas === 2) {
-        specs.tipo_carroceria = "COUPE";
-      } else if (puertas === 3) {
-        specs.tipo_carroceria = "HATCHBACK";
-      } else if (puertas === 4) {
-        specs.tipo_carroceria = "SEDAN";
-      } else if (puertas === 5) {
-        specs.tipo_carroceria = "SUV";
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    const batch = records.slice(i, i + BATCH_SIZE);
+    for (const record of batch) {
+      try {
+        const processed = processHdiRecord(record);
+        results.push(processed);
+      } catch (error) {
+        errors.push({
+          error: true,
+          mensaje: error.message,
+          id_original: record.id_original,
+          codigo_error: categorizeError(error),
+          registro_original: record,
+          fecha_error: new Date().toISOString(),
+        });
       }
     }
   }
 
-  // === Número de Ocupantes (si no se detectó antes) ===
-  if (!specs.numero_ocupantes && numeroOcupantesOriginal) {
-    const ocupantes = parseInt(numeroOcupantesOriginal);
-    if (ocupantes >= 2 && ocupantes <= 23) {
-      specs.numero_ocupantes = ocupantes;
-    }
-  }
-
-  return specs;
+  return { results, errors };
 }
 
-// ==========================================
-// PROCESAMIENTO PRINCIPAL
-// ==========================================
-
-const fechaProceso = new Date().toISOString();
-const registros = [];
-
-for (const item of $input.all()) {
-  const data = item.json;
-
-  // === PASO 1: NORMALIZACIÓN BÁSICA ===
-  const marcaNormalizada = normalizarMarca(data.marca);
-  const modeloNormalizado = normalizarModelo(data.modelo, data.marca);
-
-  // === PASO 2: DETECCIÓN DE TRANSMISIÓN ===
-  const transmisionNormalizada = normalizarTransmision(
-    data.transmision_codigo,
-    data.transmision_texto,
-    data.version_corta || data.version_original
-  );
-
-  // === PASO 3: NORMALIZACIÓN DE VERSIÓN ===
-  const versionNormalizada = normalizarVersion(
-    data.version_corta || data.version_original
-  );
-
-  // === PASO 4: EXTRACCIÓN DE ESPECIFICACIONES ===
-  const specs = extraerEspecificaciones(
-    data.version_corta || data.version_original,
-    data.numero_ocupantes_original
-  );
-
-  // === PASO 5: GENERAR CONCATENACIONES (ORDEN CRÍTICO) ===
-  const mainSpecs = [
-    marcaNormalizada,
-    modeloNormalizado,
-    data.año,
-    transmisionNormalizada,
-  ]
-    .map((v) => v || "null")
-    .join("|");
-
-  const techSpecs = [
-    versionNormalizada || "null",
-    specs.configuracion_motor || "null",
-    specs.cilindrada_l || "null",
-    specs.traccion || "null",
-    specs.tipo_carroceria || "null",
-    specs.numero_ocupantes || "null",
-  ].join("|");
-
-  // === PASO 6: GENERAR HASHES ===
-  const hashComercial = generarHash(mainSpecs);
-  const hashTecnico = generarHash(mainSpecs, techSpecs);
-
-  // === PASO 7: CREAR REGISTRO CON SCHEMA ESTÁNDAR ===
-  const registro = {
-    // Identificación
-    origen_aseguradora: ASEGURADORA,
-
-    // Datos principales
-    marca: marcaNormalizada,
-    modelo: modeloNormalizado,
-    anio: data.año,
-    transmision: transmisionNormalizada,
-    version: versionNormalizada || null,
-
-    // Especificaciones técnicas
-    motor_config: specs.configuracion_motor,
-    cilindrada: specs.cilindrada_l,
-    traccion: specs.traccion,
-    carroceria: specs.tipo_carroceria,
-    numero_ocupantes: specs.numero_ocupantes,
-
-    // Concatenaciones
-    main_specs: mainSpecs,
-    tech_specs: techSpecs,
-
-    // Hashes únicos
-    hash_comercial: hashComercial,
-    hash_tecnico: hashTecnico,
-
-    // Metadata
-    aseguradoras_disponibles: [ASEGURADORA],
-    fecha_actualizacion: fechaProceso,
-  };
-
-  registros.push(registro);
+function normalizeHdiRecords(items = []) {
+  const rawRecords = items.map((it) => (it && it.json ? it.json : it));
+  const { results, errors } = normalizeHdiData(rawRecords);
+  const successItems = results.map((record) => ({ json: record }));
+  const errorItems = errors.map((err) => ({ json: err }));
+  return [...successItems, ...errorItems];
 }
 
-// Retornar para n8n
-return registros.map((item) => ({ json: item }));
+const outputItems = normalizeHdiRecords(items);
+return outputItems;

@@ -1,623 +1,688 @@
-// ==========================================
-// ETL NORMALIZACIÓN EL POTOSÍ - CATÁLOGO MAESTRO DE VEHÍCULOS
-// Versión: 1.0 - Implementación inicial
-// Fecha: 2025-01-15
-// Autor: Sistema ETL Multi-Aseguradora
-// ==========================================
-
+﻿// src/insurers/elpotosi/elpotosi-codigo-de-normalizacion.js
 /**
- * PROPÓSITO:
- * Este código normaliza los datos de vehículos de la aseguradora EL POTOSÍ
- * para integrarlos en un catálogo maestro unificado. El proceso incluye:
- * 1. Limpieza y normalización de marcas/modelos
- * 2. Mapeo de transmisión desde campo numérico
- * 3. Extracción de versión (trim) del campo VersionCorta/Descripcion
- * 4. Detección de configuración motor, carrocería y tracción
- * 5. Generación de hashes únicos para deduplicación
+ * El PotosÃ­ ETL - Normalization Code Node
  *
- * IMPORTANTE:
- * - Solo procesar registros con Activo = 1
- * - El campo VersionCorta puede estar vacío, usar Descripcion como fallback
- * - Hay inconsistencias graves en mapeo marca-modelo que requieren validación
- * - No inventar TRIMs, si no existe retornar null
+ * Mirrors the Zurich/BX normalization pipeline while covering El PotosÃ­â€‘specific
+ * quirks (VersionCorta fallback, â€œ0 Ton / Ocup / PTASâ€ blocks, comma-heavy trims).
+ * Use inside an n8n Code node; it emits `{ json }` payloads and keeps validation
+ * failures in-stream with `error: true`.
  */
-
-// ==========================================
-// CONFIGURACIÓN Y DEPENDENCIAS
-// ==========================================
-
-const ASEGURADORA = "EL_POTOSI";
 const crypto = require("crypto");
 
-// ==========================================
-// FUNCIONES DE UTILIDAD GENERAL
-// ==========================================
+const BATCH_SIZE = 5000;
 
-/**
- * Normaliza cualquier texto eliminando acentos, caracteres especiales
- * y convirtiendo a mayúsculas.
- */
-function normalizarTexto(texto) {
-  if (!texto) return "";
-  return texto
-    .toString()
-    .toUpperCase()
+const ELPOTOSI_NORMALIZATION_DICTIONARY = {
+  irrelevant_comfort_audio: [
+    "ABS",
+    "CA",
+    "CE",
+    "CD",
+    "CB",
+    "CQ",
+    "SQ",
+    "EQ",
+    "A/A",
+    "E/E",
+    "A A",
+    "E E",
+    "AA",
+    "EE",
+    "B/A",
+    "B A",
+    "Q/C",
+    "Q C",
+    "QC",
+    "BA",
+    "PIEL",
+    "TELA",
+    "VINIL",
+    "ALUMINIO",
+    "ALARM",
+    "ALARMA",
+    "RADIO",
+    "STEREO",
+    "MP3",
+    "DVD",
+    "GPS",
+    "BT",
+    "USB",
+    "NAV",
+    "NAVI",
+    "CAM",
+    "CAMARA",
+    "CAM TRAS",
+    "SENSOR",
+    "SENSORES",
+    "PARK",
+    "PARKTRONIC",
+    "CLIMA",
+    "CLIMATRONIC",
+    "D/T",
+    "D T",
+    "D/V",
+    "D V",
+    "DIS",
+    "PADDLE",
+    "KEYLESS",
+    "PUSH",
+    "START",
+    "BOTON",
+    "ENCENDIDO",
+  ],
+  transmission_tokens_to_strip: [
+    "AUT",
+    "AUT.",
+    "AUTO",
+    "AT",
+    "AT.",
+    "AUTOMATICO",
+    "AUTOMATICA",
+    "AUTOMATIC",
+    "AUTOMATIZADO",
+    "AUTOMATIZADA",
+    "TIPTRONIC",
+    "STEPTRONIC",
+    "GEARTRONIC",
+    "MULTITRONIC",
+    "SPORTSHIFT",
+    "S-TRONIC",
+    "S TRONIC",
+    "STRONIC",
+    "Q-TRONIC",
+    "Q TRONIC",
+    "CVT",
+    "DSG",
+    "DCT",
+    "SECUENCIAL",
+    "SECUENCIAL.",
+    "SELESPEED",
+    "SELESPEDD",
+    "POWERSHIFT",
+    "TORQUEFLITE",
+    "MANUAL",
+    "MAN",
+    "MAN.",
+    "STD",
+    "STD.",
+    "MECANICO",
+    "MECANICA",
+    "MECA",
+    "MECHANICO",
+  ],
+  cylinder_normalization: {
+    L3: "3CIL",
+    L4: "4CIL",
+    L5: "5CIL",
+    L6: "6CIL",
+    L8: "8CIL",
+    V6: "6CIL",
+    V8: "8CIL",
+    V10: "10CIL",
+    V12: "12CIL",
+    W12: "12CIL",
+    H4: "4CIL",
+    H6: "6CIL",
+    I3: "3CIL",
+    I4: "4CIL",
+    I5: "5CIL",
+    I6: "6CIL",
+    R3: "3CIL",
+    R4: "4CIL",
+    R5: "5CIL",
+    R6: "6CIL",
+    B4: "4CIL",
+    B6: "6CIL",
+  },
+  transmission_normalization: {
+    STD: "MANUAL",
+    "STD.": "MANUAL",
+    MANUAL: "MANUAL",
+    MAN: "MANUAL",
+    "MAN.": "MANUAL",
+    MECA: "MANUAL",
+    MECANICO: "MANUAL",
+    MECANICA: "MANUAL",
+    MECHANICO: "MANUAL",
+    SECUENCIAL: "MANUAL",
+    "SECUENCIAL.": "MANUAL",
+    DRIVELOGIC: "MANUAL",
+    DUALOGIC: "MANUAL",
+    AUT: "AUTO",
+    "AUT.": "AUTO",
+    AUTO: "AUTO",
+    AT: "AUTO",
+    "AT.": "AUTO",
+    AUTOMATICO: "AUTO",
+    AUTOMATICA: "AUTO",
+    AUTOMATIC: "AUTO",
+    AUTOMATIZADO: "AUTO",
+    AUTOMATIZADA: "AUTO",
+    CVT: "AUTO",
+    DSG: "AUTO",
+    "S TRONIC": "AUTO",
+    "S-TRONIC": "AUTO",
+    STRONIC: "AUTO",
+    TIPTRONIC: "AUTO",
+    STEPTRONIC: "AUTO",
+    SELESPEED: "AUTO",
+    "Q-TRONIC": "AUTO",
+    "Q TRONIC": "AUTO",
+    DCT: "AUTO",
+    MULTITRONIC: "AUTO",
+    GEARTRONIC: "AUTO",
+    SPEEDSHIFT: "AUTO",
+    SPORTSHIFT: "AUTO",
+    POWERSHIFT: "AUTO",
+    TORQUEFLITE: "AUTO",
+  },
+  regex_patterns: {
+    decimal_comma: /(\d),(\d)/g,
+    multiple_spaces: /\s+/g,
+    trim_spaces: /^\s+|\s+$/g,
+    stray_punctuation: /(?<!\d)[\.,;]|[\.,;](?!\d)/g,
+  },
+};
+
+const PROTECTED_HYPHEN_TOKENS = [
+  {
+    regex: /\bA[\s-]?SPEC\b/gi,
+    placeholder: "__EP_PROTECTED_A_SPEC__",
+    canonical: "A-SPEC",
+  },
+  {
+    regex: /\bTYPE[\s-]?S\b/gi,
+    placeholder: "__EP_PROTECTED_TYPE_S__",
+    canonical: "TYPE-S",
+  },
+  {
+    regex: /\bTYPE[\s-]?R\b/gi,
+    placeholder: "__EP_PROTECTED_TYPE_R__",
+    canonical: "TYPE-R",
+  },
+  {
+    regex: /\bTYPE[\s-]?F\b/gi,
+    placeholder: "__EP_PROTECTED_TYPE_F__",
+    canonical: "TYPE-F",
+  },
+  {
+    regex: /\bS[\s-]?LINE\b/gi,
+    placeholder: "__EP_PROTECTED_S_LINE__",
+    canonical: "S-LINE",
+  },
+];
+
+function applyProtectedTokens(value = "") {
+  if (!value || typeof value !== "string") return "";
+  let output = value;
+  PROTECTED_HYPHEN_TOKENS.forEach(({ regex, placeholder }) => {
+    output = output.replace(regex, placeholder);
+  });
+  return output;
+}
+
+function restoreProtectedTokens(value = "") {
+  if (!value || typeof value !== "string") return "";
+  let output = value;
+  PROTECTED_HYPHEN_TOKENS.forEach(({ placeholder, canonical }) => {
+    const placeholderRegex = new RegExp(placeholder, "g");
+    output = output.replace(placeholderRegex, canonical);
+  });
+  return output;
+}
+
+function canonicalizeProtectedSpacing(value = "") {
+  if (!value || typeof value !== "string") return "";
+  let output = value;
+  PROTECTED_HYPHEN_TOKENS.forEach(({ canonical }) => {
+    const canonicalNoHyphen = canonical.replace(/-/g, " ");
+    const pattern = new RegExp(
+      `\\b${canonicalNoHyphen.replace(/\s+/g, "\\s+")}\\b`,
+      "gi"
+    );
+    output = output.replace(pattern, canonical);
+  });
+  return output;
+}
+
+function escapeRegExp(text = "") {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeDrivetrain(versionString = "") {
+  return versionString
+    .replace(/\bALL[-\s]?WHEEL DRIVE\b/g, "AWD")
+    .replace(/\b4MATIC\b/g, "AWD")
+    .replace(/\bQUATTRO\b/g, "AWD")
+    .replace(/\bTRACCION\s+TOTAL\b/g, "AWD")
+    .replace(/\bAWD\b/g, "AWD")
+    .replace(/\b4\s*X\s*4\b/g, "4WD")
+    .replace(/\b4\s*WD\b/g, "4WD")
+    .replace(/\b4\s*WHEEL DRIVE\b/g, "4WD")
+    .replace(/\bTRACCION\s+4X4\b/g, "4WD")
+    .replace(/\bFRONT[-\s]?WHEEL DRIVE\b/g, "FWD")
+    .replace(/\bTRACCION\s+DELANTERA\b/g, "FWD")
+    .replace(/\bFWD\b/g, "FWD")
+    .replace(/\bREAR[-\s]?WHEEL DRIVE\b/g, "RWD")
+    .replace(/\bTRACCION\s+TRASERA\b/g, "RWD")
+    .replace(/\b4\s*X\s*2\b/g, "RWD")
+    .replace(/\b2WD\b/g, "RWD")
+    .replace(/\bRWD\b/g, "RWD");
+}
+
+function normalizeCylinders(versionString = "") {
+  if (!versionString || typeof versionString !== "string") {
+    return "";
+  }
+  let normalized = versionString;
+  Object.entries(
+    ELPOTOSI_NORMALIZATION_DICTIONARY.cylinder_normalization
+  ).forEach(([from, to]) => {
+    const regex = new RegExp(`\\b${escapeRegExp(from)}\\b`, "g");
+    normalized = normalized.replace(regex, to);
+  });
+  return normalized;
+}
+
+function normalizeEngineDisplacement(versionString = "") {
+  if (!versionString || typeof versionString !== "string") {
+    return "";
+  }
+  return versionString
+    .replace(/\b(\d)(\d)L\b/g, "$1.$2L")
+    .replace(/\b(?<!\d\.)\d+L\b/g, (match) => `${match.slice(0, -1)}.0L`)
+    .replace(/\b(?<!\d\.)\d+\s+L\b/g, (match) => {
+      const digits = match.match(/\d+/)[0];
+      return `${digits}.0L`;
+    });
+}
+
+function normalizeStandaloneLiters(value = "") {
+  if (!value || typeof value !== "string") return "";
+  let normalized = value;
+
+  normalized = normalized.replace(
+    /\b(\d+(?:\.\d+)?)\s*(?:LTS?|LITROS?)\b/g,
+    (_, liters) => `${liters}L`
+  );
+
+  normalized = normalized.replace(
+    /\b(\d+\.\d+)\b(?!\s*(?:L|LTS?|LITROS?|TON|TONELADAS?|OCUP|CIL|HP|K?G|TONS?))/g,
+    (_, liters) => `${liters}L`
+  );
+
+  return normalized;
+}
+
+function normalizeHorsepower(versionString = "") {
+  if (!versionString || typeof versionString !== "string") {
+    return "";
+  }
+  return versionString
+    .replace(/\b(\d+)\s*C\.P\.?\b/g, "$1HP")
+    .replace(/\b(\d+)\s*CP\b/g, "$1HP")
+    .replace(/\b(\d+)\s*H\.P\.?\b/g, "$1HP")
+    .replace(/\b(\d+)\s*HP\b/g, "$1HP");
+}
+
+function normalizeTurboTokens(versionString = "") {
+  if (!versionString || typeof versionString !== "string") {
+    return "";
+  }
+  return versionString
+    .replace(/\bTBO\b/g, "TURBO")
+    .replace(/\bBI[-\s]?TURBO\b/g, "BITURBO")
+    .replace(/\bTWIN[-\s]?TURBO\b/g, "TWIN TURBO")
+    .replace(/\bT\/T\b/g, "TWIN TURBO");
+}
+
+function normalizeTonCapacity(versionString = "") {
+  if (!versionString || typeof versionString !== "string") {
+    return "";
+  }
+  return versionString.replace(
+    /\b(\d+(?:\.\d+)?)\s*TON\b/g,
+    (_, value) => `${value}TON`
+  );
+}
+
+function stripLeadingPhrases(text, phrases = []) {
+  let cleaned = text.replace(
+    /([A-Z0-9]+)(AUT|MAN|STD|CVT|DSG|DCT|TIPTRONIC)\b/g,
+    "$1 $2"
+  );
+  cleaned = cleaned.replace(/\bHB\b/g, "HATCHBACK");
+
+  cleaned = cleaned.trim();
+  phrases.forEach((phrase) => {
+    if (!phrase) return;
+    const normalized = phrase
+      .toString()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalized) return;
+    const variations = [normalized, normalized.replace(/\s+/g, "")];
+    let changed = true;
+    while (changed && cleaned) {
+      changed = false;
+      for (const variant of variations) {
+        if (!variant) continue;
+        if (cleaned === variant) {
+          cleaned = "";
+          changed = true;
+        } else if (cleaned.startsWith(`${variant} `)) {
+          cleaned = cleaned.slice(variant.length).trimStart();
+          changed = true;
+        }
+      }
+    }
+  });
+  return cleaned.trim();
+}
+
+function cleanVersionString(versionString, marca = "", modelo = "") {
+  if (!versionString || typeof versionString !== "string") {
+    return "";
+  }
+
+  let cleaned = versionString
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // Elimina acentos
-    .replace(/[^A-Z0-9\s-]/g, " ") // Solo permite letras, números, espacios y guiones
-    .replace(/\s+/g, " ") // Colapsa espacios múltiples
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/"/g, " ")
     .trim();
+
+  cleaned = applyProtectedTokens(cleaned);
+
+  cleaned = cleaned.replace(
+    /([A-Z0-9]+)(AUT|MAN|STD|CVT|DSG|DCT|TIPTRONIC)\b/g,
+    "$1 $2"
+  );
+  cleaned = cleaned.replace(/\bHB\b/g, "HATCHBACK");
+  cleaned = cleaned.replace(
+    ELPOTOSI_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
+    "$1.$2"
+  );
+  cleaned = stripLeadingPhrases(cleaned, [marca, modelo]);
+  cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)T\b/g, "$1L TURBO");
+  cleaned = cleaned.replace(/[,/]/g, " ").replace(/-/g, " ");
+  cleaned = cleaned.replace(/(\d)([A-Z])/g, "$1 $2");
+  cleaned = cleaned.replace(/([A-Z])(\d)/g, "$1 $2");
+  cleaned = cleaned.replace(/\b(V|L|R|H|I|B)\s+(\d{1,2})\b/g, "$1$2");
+  cleaned = cleaned.replace(/\b(\d{1,2})\s+CIL\b/g, "$1CIL");
+  cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s+L\b/g, "$1L");
+  cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s*LTS?\b/g, "$1L");
+
+  cleaned = normalizeTonCapacity(cleaned);
+  cleaned = normalizeDrivetrain(cleaned);
+  cleaned = normalizeCylinders(cleaned);
+  cleaned = normalizeEngineDisplacement(cleaned);
+  cleaned = normalizeStandaloneLiters(cleaned);
+  cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)T\b/g, "$1L TURBO");
+  cleaned = normalizeHorsepower(cleaned);
+  cleaned = normalizeTurboTokens(cleaned);
+
+  ELPOTOSI_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.forEach(
+    (token) => {
+      const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
+      cleaned = cleaned.replace(regex, " ");
+    }
+  );
+
+  ELPOTOSI_NORMALIZATION_DICTIONARY.transmission_tokens_to_strip.forEach(
+    (token) => {
+      const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
+      cleaned = cleaned.replace(regex, " ");
+    }
+  );
+
+  cleaned = cleaned.replace(/\s*\/\s*/g, " ");
+  cleaned = cleaned.replace(
+    ELPOTOSI_NORMALIZATION_DICTIONARY.regex_patterns.stray_punctuation,
+    " "
+  );
+  cleaned = cleaned.replace(
+    ELPOTOSI_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
+    " "
+  );
+  cleaned = cleaned.replace(
+    ELPOTOSI_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces,
+    ""
+  );
+
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  cleaned = restoreProtectedTokens(cleaned);
+  cleaned = canonicalizeProtectedSpacing(cleaned);
+  return cleaned;
 }
 
-/**
- * Genera hash SHA-256 para identificación única
- */
-function generarHash(...componentes) {
-  const texto = componentes
-    .filter((c) => c !== undefined && c !== null && c !== "")
-    .join("|")
+function extractDoorsAndOccupants(versionOriginal = "") {
+  if (!versionOriginal || typeof versionOriginal !== "string") {
+    return { doors: "", occupants: "" };
+  }
+  const normalized = versionOriginal
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/[,/]/g, " ");
+
+  const doorsMatch = normalized.match(
+    /\b(\d)\s*(?:P(?:TAS?|TS?|TA)|PUERTAS?|PTS?)\b/
+  );
+  const occMatch = normalized.match(/\b0?(\d{1,2})\s*OCUP\b/);
+
+  const doors = doorsMatch ? `${doorsMatch[1]}PUERTAS` : "";
+  const occupants =
+    occMatch && !Number.isNaN(parseInt(occMatch[1], 10))
+      ? `${parseInt(occMatch[1], 10)}OCUP`
+      : "";
+
+  return { doors, occupants };
+}
+
+function normalizeTransmission(transmissionCode) {
+  if (!transmissionCode || typeof transmissionCode !== "string") {
+    return "";
+  }
+  const normalized = transmissionCode
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .trim();
+  return (
+    ELPOTOSI_NORMALIZATION_DICTIONARY.transmission_normalization[normalized] ||
+    normalized
+  );
+}
+
+function inferTransmissionFromVersion(versionOriginal = "") {
+  if (!versionOriginal || typeof versionOriginal !== "string") {
+    return "";
+  }
+  const normalized = versionOriginal
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
-  return crypto.createHash("sha256").update(texto).digest("hex");
-}
-
-// ==========================================
-// NORMALIZACIÓN DE MARCA
-// ==========================================
-
-/**
- * Normaliza nombres de marcas aplicando sinónimos y correcciones
- */
-function normalizarMarca(marca) {
-  if (!marca) return "";
-  let marcaNorm = normalizarTexto(marca);
-
-  // Diccionario de sinónimos y variaciones
-  const sinonimos = {
-    VOLKSWAGEN: ["VW", "VOLKSWAGEN", "VOLKS WAGEN"],
-    "MERCEDES BENZ": ["MERCEDES", "MERCEDES-BENZ", "MERCEDES BENZ", "MB"],
-    CHEVROLET: ["CHEVROLET", "CHEVY", "CHEV"],
-    MINI: ["MINI COOPER", "MINI", "COOPER"],
-    "LAND ROVER": ["LAND ROVER", "LANDROVER", "LAND-ROVER"],
-    "ALFA ROMEO": ["ALFA", "ALFA ROMEO", "ALFAROMEO"],
-    GMC: ["GMC", "GM", "GENERAL MOTORS"],
-    BMW: ["BMW", "BAYERISCHE MOTOREN WERKE"],
-    MAZDA: ["MAZDA", "MATSUDA"],
-    KIA: ["KIA", "KIA MOTORS"],
-    HYUNDAI: ["HYUNDAI", "HYNDAI", "HUNDAI"],
-    MITSUBISHI: ["MITSUBISHI", "MITSIBUSHI", "MITS"],
-    NISSAN: ["NISSAN", "NISAN", "DATSUN"],
-    PEUGEOT: ["PEUGEOT", "PEUGOT", "PEUGEOUT"],
-    RENAULT: ["RENAULT", "RENOLT", "RENO"],
-    SUBARU: ["SUBARU", "SUBAROO"],
-    SUZUKI: ["SUZUKI", "SUSUKI"],
-    TOYOTA: ["TOYOTA", "TOYOTTA"],
-    VOLVO: ["VOLVO", "VOLVOO"],
-    FIAT: ["FIAT", "FIATT"],
-    SEAT: ["SEAT", "CEAT"],
-  };
-
-  // Buscar coincidencias en el diccionario
-  for (const [marcaEstandar, variantes] of Object.entries(sinonimos)) {
-    if (variantes.includes(marcaNorm)) {
-      return marcaEstandar;
+  for (const token of Object.keys(
+    ELPOTOSI_NORMALIZATION_DICTIONARY.transmission_normalization
+  )) {
+    const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
+    if (regex.test(normalized)) {
+      return ELPOTOSI_NORMALIZATION_DICTIONARY.transmission_normalization[
+        token
+      ];
     }
   }
-
-  return marcaNorm;
+  return "";
 }
 
-// ==========================================
-// NORMALIZACIÓN DE MODELO
-// ==========================================
-
-/**
- * Normaliza nombres de modelos eliminando redundancias con la marca
- */
-function normalizarModelo(modelo, marca) {
-  if (!modelo) return "";
-  let modeloNorm = normalizarTexto(modelo);
-
-  // Eliminar marca del inicio del modelo si está presente
-  const marcaNorm = normalizarTexto(marca);
-  if (modeloNorm.startsWith(marcaNorm + " ")) {
-    modeloNorm = modeloNorm.substring(marcaNorm.length + 1);
-  }
-
-  return modeloNorm;
+function dedupeTokens(value = "") {
+  if (!value) return "";
+  const tokens = value.split(" ").filter(Boolean);
+  const seen = new Set();
+  const deduped = [];
+  tokens.forEach((token) => {
+    const formatted = token.trim();
+    if (!formatted) return;
+    if (formatted.length === 1 && !/\d/.test(formatted)) return;
+    if (!seen.has(formatted)) {
+      seen.add(formatted);
+      deduped.push(formatted);
+    }
+  });
+  return deduped.join(" ");
 }
 
-// ==========================================
-// MAPEO DE TRANSMISIÓN
-// ==========================================
+function validateRecord(record) {
+  const errors = [];
+  const year = Number(record.anio);
 
-/**
- * Mapea el código numérico de transmisión a valores estándar
- */
-function normalizarTransmision(codigoTransmision) {
-  // El Potosí usa códigos numéricos
-  // 1 = Manual/STD
-  // 2 = Automática/AUT
-  // 0 = No especificado
-
-  const transmision = parseInt(codigoTransmision);
-
-  switch (transmision) {
-    case 1:
-      return "MANUAL";
-    case 2:
-      return "AUTO";
-    case 0:
-    default:
-      return null;
+  if (!record.marca || record.marca.toString().trim() === "") {
+    errors.push("marca is required");
   }
+  if (!record.modelo || record.modelo.toString().trim() === "") {
+    errors.push("modelo is required");
+  }
+  if (!Number.isInteger(year) || year < 2000 || year > 2030) {
+    errors.push("anio must be between 2000-2030");
+  } else {
+    record.anio = year;
+  }
+  if (
+    !record.version_original ||
+    record.version_original.toString().trim() === ""
+  ) {
+    errors.push("version is required");
+  }
+  if (!record.transmision || record.transmision.toString().trim() === "") {
+    errors.push("transmision is required");
+  }
+
+  return { isValid: errors.length === 0, errors };
 }
 
-// ==========================================
-// PREPARACIÓN DEL CAMPO VERSION
-// ==========================================
-
-/**
- * Prepara el texto de versión para procesamiento
- */
-function prepararVersion(registro) {
-  // Usar VersionCorta si existe, sino usar Descripcion
-  let versionRaw = registro.version_corta || registro.descripcion || "";
-
-  // Convertir a mayúsculas
-  versionRaw = versionRaw.toUpperCase();
-
-  // Limpiar prefijos de marca/modelo si están presentes
-  // Ejemplo: "NISSAN SENTRA SR BITONO..." → "SR BITONO..."
-  const marca = normalizarTexto(registro.marca_descripcion);
-  const modelo = normalizarTexto(registro.modelo_descripcion);
-
-  // Eliminar marca del inicio
-  if (versionRaw.startsWith(marca + " ")) {
-    versionRaw = versionRaw.substring(marca.length + 1);
-  }
-
-  // Eliminar modelo del inicio (si queda después de eliminar marca)
-  if (versionRaw.startsWith(modelo + " ")) {
-    versionRaw = versionRaw.substring(modelo.length + 1);
-  }
-
-  // Limpiar "Año: XXXX" del final si existe
-  versionRaw = versionRaw.replace(/\s*AÑO:\s*\d{4}\s*$/i, "");
-
-  return versionRaw.trim();
+function normalizeText(value) {
+  return value
+    ? value
+        .toString()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim()
+        .toUpperCase()
+    : "";
 }
 
-// ==========================================
-// EXTRACCIÓN DE TRIM (VERSION)
-// ==========================================
+function categorizeError(error) {
+  const message = error.message.toLowerCase();
+  if (message.includes("validation")) return "VALIDATION_ERROR";
+  if (message.includes("hash")) return "HASH_GENERATION_ERROR";
+  return "NORMALIZATION_ERROR";
+}
 
-/**
- * Extrae el TRIM/versión limpio del texto
- */
-function extraerTrim(versionText) {
-  if (!versionText) return null;
+function createCommercialHash(vehicle) {
+  const key = [
+    vehicle.marca || "",
+    vehicle.modelo || "",
+    vehicle.anio ? vehicle.anio.toString() : "",
+    vehicle.transmision || "",
+  ]
+    .join("|")
+    .toLowerCase()
+    .trim();
+  return crypto.createHash("sha256").update(key).digest("hex");
+}
 
-  // Lista de TRIMs válidos identificados en El Potosí
-  const TRIMS_VALIDOS = [
-    // Premium/Lujo
-    "LIMITED",
-    "EXCLUSIVE",
-    "PLATINUM",
-    "SIGNATURE",
-    "RESERVE",
+function processElPotosiRecord(record) {
+  const derivedTransmission =
+    normalizeTransmission(record.transmision) ||
+    inferTransmissionFromVersion(record.version_original);
 
-    // Niveles medios-altos
-    "ADVANCE",
-    "ACTIVE",
-    "ALLURE",
-    "DYNAMIC",
-    "PREMIUM",
+  record.transmision = derivedTransmission;
 
-    // Niveles estándar
-    "GLS",
-    "GLX",
-    "GLE",
-    "GL",
-    "GT",
-    "GTI",
-    "GTS",
-    "LT",
-    "LE",
-    "LX",
-    "LS",
-    "LTZ",
-    "SE",
-    "SEL",
-    "SR",
-    "SV",
-    "SL",
-    "S",
-    "EX",
-    "EX-L",
+  const { doors, occupants } = extractDoorsAndOccupants(
+    record.version_original || ""
+  );
+  const validation = validateRecord(record);
+  if (!validation.isValid) {
+    throw new Error(`Validation failed: ${validation.errors.join(", ")}`);
+  }
 
-    // Deportivos
-    "SPORT",
-    "RS",
-    "ST",
-    "TYPE R",
-    "TYPE S",
-    "R-DESIGN",
-    "FR",
-    "CUPRA",
-    "JOHN COOPER WORKS",
-    "JCW",
+  let versionLimpia = cleanVersionString(
+    record.version_original || "",
+    record.marca || "",
+    record.modelo || ""
+  );
 
-    // Específicos VW Group
-    "COMFORTLINE",
-    "TRENDLINE",
-    "HIGHLINE",
-    "R-LINE",
-
-    // SEAT
-    "STYLE",
-    "REFERENCE",
-    "XCELLENCE",
-
-    // Renault/Nissan
-    "SENSE",
-    "INTENS",
-    "ZEN",
-    "ICONIC",
-
-    // Peugeot
-    "ACCESS",
-    "ACTIVE",
-    "ALLURE",
-    "GT LINE",
-
-    // Mazda
-    "I",
-    "I SPORT",
-    "I TOURING",
-    "I GRAND TOURING",
-
-    // BMW
-    "SPORT LINE",
-    "LUXURY LINE",
-    "M SPORT",
-
-    // Mercedes
-    "AVANTGARDE",
-    "ELEGANCE",
-    "AMG LINE",
-
-    // Pickups
-    "PRO",
-    "PRO-4X",
-    "TRADESMAN",
-    "BIG HORN",
-    "LARAMIE",
-    "REBEL",
-    "KING RANCH",
-    "LARIAT",
-    "RAPTOR",
-
-    // Híbridos/Eléctricos
-    "E-POWER",
-    "HYBRID",
-    "PHEV",
-    "EV",
-
-    // Básicos
-    "BASE",
-    "CORE",
-    "ESSENTIAL",
-
-    // Ediciones especiales
-    "ANNIVERSARY",
-    "BLACK EDITION",
-    "NIGHT EDITION",
-  ];
-
-  // Limpiar el texto inicial
-  let cleanText = versionText
-    .replace(/,.*$/, "") // Eliminar todo después de la primera coma
-    .replace(/\s*(AUT|AUTO|STD|MANUAL|CVT|DSG)\s+/gi, " ") // Eliminar transmisión
-    .replace(/\s*\d+\s*(PTAS?|PUERTAS)\s*/gi, " ") // Eliminar puertas
-    .replace(/\s*\d+\s*OCUP\s*/gi, " ") // Eliminar ocupantes
-    .replace(/\s*\d+(\.\d+)?\s*TON\s*/gi, " ") // Eliminar tonelaje
-    .replace(/\s*\d+\.\d+[LT]?\s*/gi, " ") // Eliminar cilindrada
+  versionLimpia = versionLimpia
+    .replace(/\b\d\s*(?:P(?:TAS?|TS?|TA)|PUERTAS?|PTS?)\b/gi, " ")
+    .replace(/\b0?\d+\s*OCUP\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  // Dividir en palabras
-  const parts = cleanText.split(" ").filter((p) => p.length > 0);
+  versionLimpia = dedupeTokens(
+    [versionLimpia, doors, occupants].filter(Boolean).join(" ").trim()
+  );
+  versionLimpia = canonicalizeProtectedSpacing(versionLimpia);
+  versionLimpia = versionLimpia.replace(
+    /\b(\d+\.\d+)\b(?!\s*(?:L|TON|OCUP|CIL|HP|K?G|TONS?))/g,
+    "$1L"
+  );
 
-  // Buscar TRIMs compuestos primero (más específicos)
-  for (let i = 0; i < parts.length - 1; i++) {
-    // Verificar combinaciones de 3 palabras
-    if (i < parts.length - 2) {
-      const triple = `${parts[i]} ${parts[i + 1]} ${parts[i + 2]}`;
-      if (TRIMS_VALIDOS.includes(triple)) {
-        return triple;
+  if (!versionLimpia) {
+    throw new Error("Normalization produced empty version_limpia");
+  }
+
+  const normalized = {
+    origen_aseguradora: "ELPOTOSI",
+    id_original: record.id_original,
+    marca: normalizeText(record.marca),
+    modelo: normalizeText(record.modelo),
+    anio: record.anio,
+    transmision: record.transmision,
+    version_original: record.version_original,
+    version_limpia: versionLimpia,
+    fecha_procesamiento: new Date().toISOString(),
+  };
+
+  normalized.hash_comercial = createCommercialHash(normalized);
+  return normalized;
+}
+
+function normalizeElPotosiData(records = []) {
+  const results = [];
+  const errors = [];
+
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    const batch = records.slice(i, i + BATCH_SIZE);
+    for (const record of batch) {
+      try {
+        const processed = processElPotosiRecord(record);
+        results.push(processed);
+      } catch (error) {
+        errors.push({
+          error: true,
+          mensaje: error.message,
+          id_original: record.id_original,
+          codigo_error: categorizeError(error),
+          registro_original: record,
+          fecha_error: new Date().toISOString(),
+        });
       }
     }
-
-    // Verificar combinaciones de 2 palabras
-    const compound = `${parts[i]} ${parts[i + 1]}`;
-    if (TRIMS_VALIDOS.includes(compound)) {
-      return compound;
-    }
   }
 
-  // Buscar TRIMs simples
-  for (const part of parts) {
-    if (TRIMS_VALIDOS.includes(part)) {
-      return part;
-    }
-  }
-
-  // No inventar "BASE" si no se encuentra TRIM
-  return null;
+  return { results, errors };
 }
 
-// ==========================================
-// EXTRACCIÓN DE CONFIGURACIÓN DE MOTOR
-// ==========================================
-
-/**
- * Extrae la configuración del motor del texto
- */
-function extraerMotorConfig(versionText) {
-  if (!versionText) return null;
-
-  const texto = versionText.toUpperCase();
-
-  // Buscar configuración específica (L4, V6, etc.)
-  const motorMatch = texto.match(/\b([LVI])([3468])\b/);
-  if (motorMatch) {
-    return `${motorMatch[1]}${motorMatch[2]}`;
-  }
-
-  // Detectar híbridos/eléctricos
-  if (texto.match(/\b(HYBRID|HEV|HV|HIBRIDO)\b/)) {
-    return "HYBRID";
-  }
-  if (texto.match(/\b(E-POWER|ELECTRIC|EV)\b/) && !texto.match(/\bHEV\b/)) {
-    return "ELECTRIC";
-  }
-  if (texto.match(/\bPHEV\b/)) {
-    return "PHEV";
-  }
-  if (texto.match(/\bMHEV\b/)) {
-    return "MHEV";
-  }
-
-  // Detectar por número de cilindros
-  const cilMatch = texto.match(/(\d+)\s*CIL/);
-  if (cilMatch) {
-    const numCil = parseInt(cilMatch[1]);
-    switch (numCil) {
-      case 3:
-        return "L3";
-      case 4:
-        return "L4";
-      case 6:
-        return "V6";
-      case 8:
-        return "V8";
-    }
-  }
-
-  // Detectar diesel
-  if (texto.match(/\b(DIESEL|TDI|CDI|CRDI)\b/)) {
-    return "DIESEL";
-  }
-
-  return null;
+function normalizeElPotosiRecords(items = []) {
+  const rawRecords = items.map((it) => (it && it.json ? it.json : it));
+  const { results, errors } = normalizeElPotosiData(rawRecords);
+  const successItems = results.map((record) => ({ json: record }));
+  const errorItems = errors.map((err) => ({ json: err }));
+  return [...successItems, ...errorItems];
 }
 
-// ==========================================
-// INFERENCIA DE CARROCERÍA
-// ==========================================
-
-/**
- * Infiere el tipo de carrocería basado en diversos indicadores
- */
-function inferirCarroceria(versionText, tipoVehiculo, modelo) {
-  // Si es pickup según tipo de vehículo
-  if (tipoVehiculo === "PIC") {
-    return "PICKUP";
-  }
-
-  const texto = versionText.toUpperCase();
-
-  // Buscar carrocería explícita en el texto
-  if (texto.match(/\bSEDAN\b/)) return "SEDAN";
-  if (texto.match(/\b(HATCHBACK|HB)\b/)) return "HATCHBACK";
-  if (texto.match(/\bSUV\b/)) return "SUV";
-  if (texto.match(/\b(COUPE|CUPE)\b/)) return "COUPE";
-  if (texto.match(/\b(CONVERTIBLE|CABRIO|ROADSTER)\b/)) return "CONVERTIBLE";
-  if (texto.match(/\b(VAN|MINIVAN)\b/)) return "VAN";
-  if (texto.match(/\b(WAGON|SPORTWAGEN|ESTATE)\b/)) return "WAGON";
-  if (texto.match(/\b(PICKUP|PICK[\s-]?UP)\b/)) return "PICKUP";
-  if (texto.match(/\bCHASIS\s+CABINA\b/)) return "PICKUP";
-
-  // Inferir por número de puertas
-  const puertasMatch = texto.match(/(\d+)\s*(?:PTAS|PUERTAS|P\b)/);
-  if (puertasMatch) {
-    const numPuertas = parseInt(puertasMatch[1]);
-    switch (numPuertas) {
-      case 2:
-        return "COUPE";
-      case 3:
-        return "HATCHBACK";
-      case 4:
-        // Necesita más contexto, por defecto SEDAN
-        return "SEDAN";
-      case 5:
-        // Podría ser HATCHBACK o SUV
-        // Verificar por modelo conocido o contexto
-        if (modelo && modelo.match(/\b(CX-|CR-V|RAV4|TUCSON|SPORTAGE)\b/)) {
-          return "SUV";
-        }
-        return "HATCHBACK";
-    }
-  }
-
-  return null;
-}
-
-// ==========================================
-// EXTRACCIÓN DE TRACCIÓN
-// ==========================================
-
-/**
- * Extrae el sistema de tracción del texto
- */
-function extraerTraccion(versionText) {
-  if (!versionText) return null;
-
-  const texto = versionText.toUpperCase();
-
-  // Buscar patrones de tracción (orden de prioridad)
-  if (texto.match(/\b4X4\b/i)) return "4X4";
-  if (texto.match(/\b4X2\b/i)) return "4X2";
-  if (texto.match(/\bAWD\b/)) return "AWD";
-  if (texto.match(/\b4WD\b/)) return "4WD";
-  if (texto.match(/\bFWD\b/)) return "FWD";
-  if (texto.match(/\bRWD\b/)) return "RWD";
-
-  // Sistemas propietarios que equivalen a AWD
-  if (texto.match(/\b(XDRIVE|QUATTRO|4MATIC|4MOTION|ALL4)\b/)) {
-    return "AWD";
-  }
-
-  return null;
-}
-
-// ==========================================
-// PROCESAMIENTO PRINCIPAL
-// ==========================================
-
-/**
- * Procesa un registro de El Potosí y lo normaliza al formato canónico
- */
-function procesarRegistro(registro) {
-  // Validar que el registro esté activo
-  if (!registro.activo || registro.activo !== 1) {
-    return null; // No procesar registros inactivos
-  }
-
-  // Normalización básica
-  const marcaNormalizada = normalizarMarca(registro.marca_descripcion);
-  const modeloNormalizado = normalizarModelo(
-    registro.modelo_descripcion,
-    marcaNormalizada
-  );
-  const anio = parseInt(registro.anio);
-  const transmisionNormalizada = normalizarTransmision(registro.transmision);
-
-  // Preparar texto de versión
-  const versionPreparada = prepararVersion(registro);
-
-  // Extraer especificaciones
-  const versionTrim = extraerTrim(versionPreparada);
-  const motorConfig = extraerMotorConfig(versionPreparada);
-  const carroceria = inferirCarroceria(
-    versionPreparada,
-    registro.tipo_vehiculo,
-    modeloNormalizado
-  );
-  const traccion = extraerTraccion(versionPreparada);
-
-  // Construir strings de identificación
-  const stringComercial = [
-    marcaNormalizada || "NULL",
-    modeloNormalizado || "NULL",
-    anio || "NULL",
-    transmisionNormalizada || "NULL",
-  ].join("|");
-
-  const stringTecnico = [
-    marcaNormalizada || "NULL",
-    modeloNormalizado || "NULL",
-    anio || "NULL",
-    transmisionNormalizada || "NULL",
-    versionTrim || "NULL",
-    motorConfig || "NULL",
-    carroceria || "NULL",
-    traccion || "NULL",
-  ].join("|");
-
-  // Generar hashes
-  const hashComercial = generarHash(
-    marcaNormalizada,
-    modeloNormalizado,
-    anio,
-    transmisionNormalizada
-  );
-
-  const idCanonico = generarHash(
-    marcaNormalizada,
-    modeloNormalizado,
-    anio,
-    transmisionNormalizada,
-    versionTrim,
-    motorConfig,
-    carroceria,
-    traccion
-  );
-
-  // Construir objeto de salida
-  return {
-    // Identificadores
-    id_canonico: idCanonico,
-    hash_comercial: hashComercial,
-    string_comercial: stringComercial,
-    string_tecnico: stringTecnico,
-
-    // Datos normalizados
-    marca: marcaNormalizada,
-    modelo: modeloNormalizado,
-    anio: anio,
-    transmision: transmisionNormalizada,
-    version: versionTrim,
-    motor_config: motorConfig,
-    carroceria: carroceria,
-    traccion: traccion,
-
-    // Metadata
-    origen_aseguradora: ASEGURADORA,
-    id_original: String(registro.id_version),
-    version_original: registro.version_corta || registro.descripcion,
-    activo: true, // Solo procesamos activos
-  };
-}
-
-// ==========================================
-// PUNTO DE ENTRADA PARA N8N
-// ==========================================
-
-// Para n8n - Function node
-const registrosProcesados = [];
-
-for (const item of $input.all()) {
-  try {
-    const registroNormalizado = procesarRegistro(item.json);
-
-    // Solo agregar si se procesó exitosamente (no es null)
-    if (registroNormalizado) {
-      registrosProcesados.push({
-        json: registroNormalizado,
-      });
-    }
-  } catch (error) {
-    // Registrar error pero continuar con otros registros
-    console.error("Error procesando registro:", error);
-    registrosProcesados.push({
-      json: {
-        error: true,
-        mensaje: error.message,
-        registro_original: item.json,
-      },
-    });
-  }
-}
-
-return registrosProcesados;
+const outputItems = normalizeElPotosiRecords(items);
+return outputItems;

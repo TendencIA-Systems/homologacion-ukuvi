@@ -57,9 +57,7 @@ Este documento describe una estrategia de homologación vehicular pensada para p
 
 - Enviar los datos normalizados al subflujo que llama la función RPC de Supabase.
 - Mandar solo los campos necesarios: `hash_comercial`, `version`, y datos de aseguradora.
-
-**Notas para integración:**
-
+  **Notas para integración:**
 - El subflujo puede ser implementado en cualquier orquestador (n8n, Airflow, etc.).
 - El payload debe ser compacto y contener solo los datos necesarios para la homologación.
 
@@ -70,25 +68,21 @@ Este documento describe una estrategia de homologación vehicular pensada para p
 ### a) Búsqueda de Coincidencias
 
 - Buscar en la tabla maestra por `hash_comercial`.
-- Si hay más de un match, usar fuzzy matching (`pg_trgm` o `fuzzystrmatch`) sobre el campo `version`.
-- Definir umbral de similitud (ejemplo: `similarity >= 0.85` para match seguro).
-
-**Detalles técnicos y transferibles:**
-
-- Activar extensiones necesarias en PostgreSQL: `CREATE EXTENSION IF NOT EXISTS pg_trgm;` y/o `fuzzystrmatch`.
-- Crear índices sobre los campos usados en búsquedas (`hash_comercial`, `version`).
-- El umbral de similitud puede ser ajustado según la calidad de los datos; documentar los valores usados y su justificación.
+- Si hay más de un match, calcular el solapamiento de tokens (`tokenize_version`) sobre el campo `version`.
+- Definir umbrales de similitud combinada (ejemplo: `score >= 0.92` para re-procesos de la misma aseguradora y `score >= 0.30` entre aseguradoras distintas).
+  **Detalles técnicos y transferibles:**
+- Activar extensiones necesarias en PostgreSQL: `CREATE EXTENSION IF NOT EXISTS pg_trgm;` y mantener la función `tokenize_version`.
+- Crear índices sobre los campos usados en búsquedas (`hash_comercial`, `version_tokens`).
+- Los umbrales de solapamiento pueden ajustarse según la calidad de los datos; documentar los valores usados y su justificación.
 
 ### b) Decisión de Acción
 
 - Si el match es seguro, actualizar la columna `disponibilidad` agregando la nueva aseguradora.
 - Si no hay match seguro, crear una nueva entrada en la tabla maestra.
 - Actualizar `confianza_score` y `fecha_actualizacion` según corresponda.
-
-**Recomendaciones para lógica de actualización:**
-
+  **Recomendaciones para lógica de actualización:**
 - La columna `disponibilidad` debe ser un JSONB que permita agregar aseguradoras sin sobrescribir las existentes.
-- El score de confianza puede ser el valor de similitud del mejor match.
+- El score de confianza puede ser el valor de solapamiento del mejor match.
 - Loggear todas las acciones (inserciones, actualizaciones, matches dudosos) en una tabla de auditoría.
 
 ---
@@ -96,12 +90,10 @@ Este documento describe una estrategia de homologación vehicular pensada para p
 ## 4. Recomendaciones y Detalles Técnicos
 
 - Realizar la limpieza de la versión en n8n para asegurar datos comparables.
-- Ajustar el umbral de similitud tras pruebas reales.
+- Ajustar los umbrales de solapamiento tras pruebas reales.
 - Documentar y loggear los matches dudosos para revisión manual.
-- Mantener índices sobre `hash_comercial` y considerar índices trigram para performance.
-
-**Transferencia a otros proyectos:**
-
+- Mantener índices sobre `hash_comercial` y un índice GIN sobre `version_tokens` para performance.
+  **Transferencia a otros proyectos:**
 - Mantener la lógica de limpieza y matching desacoplada del resto del sistema para facilitar su reutilización.
 - Documentar el proceso de homologación y los criterios de decisión para facilitar la colaboración entre equipos y agentes.
 
@@ -111,12 +103,11 @@ Este documento describe una estrategia de homologación vehicular pensada para p
 
 1. n8n extrae y normaliza los datos, calcula el hash y limpia la versión.
 2. n8n envía el registro a Supabase.
-3. Supabase busca por hash comercial y compara versiones con fuzzy matching.
+3. Supabase busca por hash comercial y compara versiones con solapamiento de tokens.
 4. Si hay match, actualiza disponibilidad; si no, inserta nuevo registro.
 5. Se loggean las acciones y se actualizan métricas.
-
-**Ejemplo transferible:**
-Este flujo puede ser adaptado para homologar productos, clientes, proveedores, etc. Solo se requiere definir los campos principales y la lógica de similitud.
+   **Ejemplo transferible:**
+   Este flujo puede ser adaptado para homologar productos, clientes, proveedores, etc. Solo se requiere definir los campos principales y la lógica de similitud.
 
 ---
 
@@ -125,21 +116,17 @@ Este flujo puede ser adaptado para homologar productos, clientes, proveedores, e
 - Implementar nodo de código de cada aseguradora en n8n para el cálculo del hash_comercial y la extracción de la versión limpia, más la deduplicación por versión más adelante.
 - Implementar la función de limpieza de versión en n8n.
 - Definir y probar el umbral de similitud en Supabase.
-- Desarrollar la función RPC con lógica de búsqueda, fuzzy matching y actualización/inserción.
+- Desarrollar la función RPC con lógica de búsqueda, solapamiento de tokens y actualización/inserción.
 - Realizar pruebas con los catálogos de HDI y Qualitas como base.
 - Documentar el proceso y ajustar según resultados.
-
-**Siguientes pasos para otros equipos/proyectos:**
-
+  **Siguientes pasos para otros equipos/proyectos:**
 - Adaptar la función de limpieza y el cálculo de hash a los campos relevantes de su dominio.
-- Probar el flujo con datos reales y ajustar los umbrales de similitud.
+- Probar el flujo con datos reales y ajustar los umbrales de solapamiento.
 - Documentar todo el proceso y compartirlo con otros equipos para retroalimentación y mejora continua.
 
 ---
 
-**Este plan busca maximizar la eficiencia y la calidad de la homologación vehicular, aprovechando la potencia de n8n para la normalización y la flexibilidad de Supabase para la persistencia y comparación inteligente.**
-
----
+## **Este plan busca maximizar la eficiencia y la calidad de la homologación vehicular, aprovechando la potencia de n8n para la normalización y la flexibilidad de Supabase para la persistencia y comparación inteligente.**
 
 ## Referencias y Recursos
 

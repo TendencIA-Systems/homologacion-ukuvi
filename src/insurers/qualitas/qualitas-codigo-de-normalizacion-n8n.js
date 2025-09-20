@@ -1,965 +1,475 @@
-// =====================================================
-// NORMALIZACIÓN QUALITAS - CATÁLOGO MAESTRO
-// Versión: 3.3.1 (JS)
-// Fecha: 2025-09-11
-// Objetivo: Extracción de TRIM (versión) robusta + prioridad de carrocería WAGON/SPORTWAGEN
-//           Devuelve null cuando no hay trim real. Evita que términos
-//           de carrocería/servicio/multimedia contaminen 'version'.
-//           Prioriza WAGON/SPORTWAGEN sobre heurísticas de puertas.
-// =====================================================
+/**
+ * Qualitas ETL - Normalization Code Node v2
+ *
+ * Limpieza alineada con Zurich/Chubb/Atlas:
+ * - Preserva trims con guion (A-SPEC, TYPE-S, S-LINE).
+ * - Normaliza litros decimales y caballos de fuerza.
+ * - Amplía diccionario de transmisiones y elimina tokens irrelevantes.
+ */
 
 const crypto = require("crypto");
-const ASEGURADORA = "QUALITAS";
 
-// =====================================================
-// UTILIDADES
-// =====================================================
-function normalizarTexto(texto) {
-  if (!texto) return "";
-  return texto
-    .toString()
-    .toUpperCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^A-Z0-9\s\-\/]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function generarHash(...componentes) {
-  const texto = componentes
-    .filter((c) => c !== undefined && c !== null)
-    .join("|")
-    .toUpperCase();
-  return crypto.createHash("sha256").update(texto).digest("hex");
-}
-
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-// =====================================================
-// DICCIONARIOS MAESTROS
-// =====================================================
-const MARCAS_SINONIMOS = {
-  VOLKSWAGEN: ["VW", "VOLKSWAGEN", "VOLKS WAGEN"],
-  "MERCEDES BENZ": [
-    "MERCEDES",
-    "MERCEDES-BENZ",
-    "MERCEDES BENZ",
-    "MB",
-    "MERCEDEZ",
+const QUALITAS_NORMALIZATION_DICTIONARY = {
+  irrelevant_comfort_audio: [
+    "AA",
+    "EE",
+    "CD",
+    "DVD",
+    "GPS",
+    "BT",
+    "USB",
+    "MP3",
+    "AM",
+    "RA",
+    "FX",
+    "BOSE",
+    "BA",
+    "ABS",
+    "QC",
+    "Q/C",
+    "Q.C.",
+    "VP",
+    "V/P",
+    "OC",
+    "PIEL",
+    "GAMUZA",
+    "CA",
+    "CE",
+    "SQ",
+    "CB",
+    "SIS/NAV",
+    "SIS.NAV.",
+    "T.S",
+    "T.P.",
+    "FBX",
+    "AC",
+    "NAVI",
+    "CAM TRAS",
+    "TBO",
+    "STD",
+    "AUT",
+    "CVT",
+    "DSG",
+    "S TRONIC",
+    "S-TRONIC",
+    "TIPTRONIC",
+    "TIPTRNIC",
+    "SELESPEED",
+    "SALESPEED",
+    "SPORTSHIFT",
+    "TOUCHTRONIC3",
+    "Q-TRONIC",
+    "DCT",
+    "MULTITRONIC",
+    "STEPTRONIC",
+    "GEARTRONIC",
+    "STRONIC",
+    "SECUENCIAL",
+    "DRIVELOGIC",
+    "DUALOGIC",
+    "SPEEDSHIFT",
+    "G-TRONIC",
+    "G TRONIC",
+    "PDK",
+    "MULTITRO",
+    "AUTOMATICA",
+    "AUTOMATICO",
+    "AUTOMATIC",
   ],
-  "ALFA ROMEO": ["ALFA ROMEO", "ALFA-ROMEO", "ALFA", "ALFAROMEO"],
-  "LAND ROVER": ["LANDROVER", "LAND ROVER", "ROVER", "LAND-ROVER"],
-  MINI: ["MINI", "MINI COOPER", "COOPER"],
-  CHEVROLET: ["CHEVROLET", "CHEVY", "GM CHEVROLET", "CHEV"],
-  GMC: ["GMC", "GM", "GENERAL MOTORS"],
-  TESLA: ["TESLA", "TESLA MOTORS", "TESSLA"],
-  LINCOLN: ["LINCOLN", "LINCON"],
-  CADILLAC: ["CADILLAC", "CADILAC"],
-  CHRYSLER: ["CHRYSLER", "CRYSLER", "CRISLER"],
-  DODGE: ["DODGE", "DOGDE"],
-  FORD: ["FORD", "FORT"],
-  JEEP: ["JEEP", "JEEEP", "JEP"],
-  RAM: ["RAM", "DODGE RAM"],
-  TOYOTA: ["TOYOTA", "TOYOTTA"],
-  HONDA: ["HONDA", "JONDA"],
-  NISSAN: ["NISSAN", "NISAN", "DATSUN"],
-  MAZDA: ["MAZDA", "MATSUDA"],
-  MITSUBISHI: ["MITSUBISHI", "MITSIBUSHI", "MITS"],
-  SUZUKI: ["SUZUKI", "SUSUKI"],
-  SUBARU: ["SUBARU", "SUBAROO"],
-  KIA: ["KIA", "KIA MOTORS"],
-  HYUNDAI: ["HYUNDAI", "HYNDAI", "HUNDAI"],
-  INFINITI: ["INFINITI", "INFINITY"],
-  LEXUS: ["LEXUS", "LEXUSS"],
-  ACURA: ["ACURA", "ACCURA"],
-  "GREAT WALL": ["GREAT WALL", "GREAT WALL MOTORS", "GREATWALL"],
-  JAC: ["JAC", "JAC MOTORS"],
-  BAIC: ["BAIC", "BAIC MOTOR"],
-  MG: ["MG", "MG MOTOR"],
-  CHANGAN: ["CHANGAN", "CHANG AN"],
-  CHIREY: ["CHIREY", "CHERY"],
-  BYD: ["BYD", "BUILD YOUR DREAMS"],
-  BMW: ["BMW", "BAYERISCHE MOTOREN WERKE"],
-  AUDI: ["AUDI", "AUDII"],
-  PORSCHE: ["PORSCHE", "PORCHE", "PORSHE"],
-  JAGUAR: ["JAGUAR", "JAGUARR"],
-  MASERATI: ["MASERATI", "MASSERATI"],
-  FERRARI: ["FERRARI", "FERARI"],
-  LAMBORGHINI: ["LAMBORGHINI", "LAMBO"],
-  "ROLLS ROYCE": ["ROLLS ROYCE", "ROLLS-ROYCE", "ROLLS"],
-  BENTLEY: ["BENTLEY", "BENTLY"],
-  MCLAREN: ["MCLAREN", "MC LAREN"],
-  VOLVO: ["VOLVO", "VOLVOO"],
-  PEUGEOT: ["PEUGEOT", "PEUGOT", "PEUGEOUT"],
-  RENAULT: ["RENAULT", "RENOLT", "RENO"],
-  FIAT: ["FIAT", "FIATT"],
-  SEAT: ["SEAT", "CEAT"],
-  CUPRA: ["CUPRA", "CUPRA RACING"],
-  SKODA: ["SKODA", "SCODA"],
-  SMART: ["SMART", "SMAR"],
-  GENESIS: ["GENESIS", "GENISIS"],
-  BUICK: ["BUICK", "BUIK"],
+  cylinder_normalization: {
+    L3: "3CIL",
+    L4: "4CIL",
+    L5: "5CIL",
+    L6: "6CIL",
+    V6: "6CIL",
+    V8: "8CIL",
+    V10: "10CIL",
+    V12: "12CIL",
+    W12: "12CIL",
+    H4: "4CIL",
+    H6: "6CIL",
+    I3: "3CIL",
+    I4: "4CIL",
+    I5: "5CIL",
+    I6: "6CIL",
+    R3: "3CIL",
+    R4: "4CIL",
+    R6: "6CIL",
+    B4: "4CIL",
+    B6: "6CIL",
+  },
+  transmission_normalization: {
+    STD: "MANUAL",
+    "STD.": "MANUAL",
+    MANUAL: "MANUAL",
+    MAN: "MANUAL",
+    "MAN.": "MANUAL",
+    SECUENCIAL: "MANUAL",
+    DRIVELOGIC: "MANUAL",
+    DUALOGIC: "MANUAL",
+    TM: "MANUAL",
+    ESTANDAR: "MANUAL",
+    AUT: "AUTO",
+    "AUT.": "AUTO",
+    AUTO: "AUTO",
+    TA: "AUTO",
+    AUTOMATICA: "AUTO",
+    AUTOMATICO: "AUTO",
+    AUTOMATIC: "AUTO",
+    CVT: "AUTO",
+    DSG: "AUTO",
+    "S TRONIC": "AUTO",
+    "S-TRONIC": "AUTO",
+    STRONIC: "AUTO",
+    TIPTRONIC: "AUTO",
+    TIPTRNIC: "AUTO",
+    SELESPEED: "AUTO",
+    SALESPEED: "AUTO",
+    SPORTSHIFT: "AUTO",
+    TOUCHTRONIC3: "AUTO",
+    "Q-TRONIC": "AUTO",
+    DCT: "AUTO",
+    MULTITRONIC: "AUTO",
+    STEPTRONIC: "AUTO",
+    GEARTRONIC: "AUTO",
+    SPEEDSHIFT: "AUTO",
+    "G-TRONIC": "AUTO",
+    "G TRONIC": "AUTO",
+    PDK: "AUTO",
+  },
+  regex_patterns: {
+    year_codes: /\b(20\d{2})\b/g,
+    multiple_spaces: /\s+/g,
+    trim_spaces: /^\s+|\s+$/g,
+  },
 };
 
-const CARROCERIA_KEYWORDS = {
-  SEDAN: ["SEDAN", "4P", "4 PUERTAS", "4DR", "BERLINA"],
-  HATCHBACK: [
-    "HATCHBACK",
-    "HB",
-    "3P",
-    "5P",
-    "3 PUERTAS",
-    "5 PUERTAS",
-    "LIFTBACK",
-  ],
-  SUV: ["SUV", "SPORT UTILITY", "CROSSOVER", "CUV"],
-  PICKUP: [
-    "PICKUP",
-    "PICK UP",
-    "PICK-UP",
-    "CREW CAB",
-    "DOBLE CABINA",
-    "CAB REG",
-    "CLUB CAB",
-    "EXTENDED CAB",
-  ],
-  COUPE: ["COUPE", "2P", "2 PUERTAS", "2DR", "CUPE"],
-  CONVERTIBLE: ["CONVERTIBLE", "CABRIO", "ROADSTER", "DESCAPOTABLE", "CONV"],
-  VAN: ["VAN", "MINIVAN", "CARGO", "PANEL"],
-  WAGON: [
-    "WAGON",
-    "ESTATE",
-    "FAMILIAR",
-    "STATION WAGON",
-    "AVANT",
-    "TOURING",
-    "SPORTWAGEN",
-    "SPORT WAGEN",
-    "SPORTWAGON",
-    "SPORT WAGON",
-  ],
-  CAMION: ["CHASIS CABINA", "CAMION", "TRUCK"],
-};
-
-const TIPOS_TRANSMISION = [
-  "SPORTSHIFT",
-  "SPORT SHIFT",
-  "SHIFTRONIC",
-  "SHIFT TRONIC",
-  "POWERSHIFT",
-  "POWER SHIFT",
-  "SELECTSHIFT",
-  "SELECT SHIFT",
-  "GEARTRONIC",
-  "GEAR TRONIC",
-  "SPORTMATIC",
-  "SPORT MATIC",
-  "STEPTRONIC",
-  "STEP TRONIC",
-  "TIPTRONIC",
-  "TIP TRONIC",
-  "MULTITRONIC",
-  "MULTI TRONIC",
-  "DUALOGIC",
-  "DUAL LOGIC",
-  "EASYTRONIC",
-  "EASY TRONIC",
-  "ACTIVEMATIC",
-  "ACTIVE MATIC",
-  "DRIVELOGIC",
-  "DRIVE LOGIC",
-  "SPORTTRONIC",
-  "SPORT TRONIC",
-  "S-TRONIC",
-  "S TRONIC",
-  "STRONIC",
-  "G-TRONIC",
-  "G TRONIC",
-  "GTRONIC",
-  "XTRONIC",
-  "X TRONIC",
-  "7G-TRONIC",
-  "9G-TRONIC",
-  "DCT",
-  "DSG",
-  "PDK",
-  "AMT",
-  "SMG",
-  "CVT",
-  "CVTF",
-  "ECVT",
-  "AUTOMATICA",
-  "AUTOMATIC",
-  "AUTO",
-  "AUT",
-  "MANUAL",
-  "ESTANDAR",
-  "STD",
-  "EST",
-  "MAN",
-  "MT",
-  "AT",
+const PROTECTED_HYPHEN_TOKENS = [
+  {
+    regex: /\bA[\s-]?SPEC\b/gi,
+    placeholder: "__Q_PROTECTED_A_SPEC__",
+    canonical: "A-SPEC",
+  },
+  {
+    regex: /\bTYPE[\s-]?S\b/gi,
+    placeholder: "__Q_PROTECTED_TYPE_S__",
+    canonical: "TYPE-S",
+  },
+  {
+    regex: /\bTYPE[\s-]?R\b/gi,
+    placeholder: "__Q_PROTECTED_TYPE_R__",
+    canonical: "TYPE-R",
+  },
+  {
+    regex: /\bTYPE[\s-]?F\b/gi,
+    placeholder: "__Q_PROTECTED_TYPE_F__",
+    canonical: "TYPE-F",
+  },
+  {
+    regex: /\bS[\s-]?LINE\b/gi,
+    placeholder: "__Q_PROTECTED_S_LINE__",
+    canonical: "S-LINE",
+  },
 ];
 
-// Catálogo grande de trims conocidos
-const VERSIONES_VALIDAS = new Set([
-  "TYPE S",
-  "TYPE R",
-  "TYPE A",
-  "S LINE",
-  "M SPORT",
-  "AMG LINE",
-  "RS LINE",
-  "R LINE",
-  "ST LINE",
-  "M PERFORMANCE",
-  "AMG",
-  "RS",
-  "SS",
-  "ST",
-  "GT",
-  "GTI",
-  "GTS",
-  "GTR",
-  "GTE",
-  "JOHN COOPER WORKS",
-  "JCW",
-  "NISMO",
-  "TRD PRO",
-  "TRD SPORT",
-  "TRD OFF-ROAD",
-  "SPORT",
-  "SPORT PLUS",
-  "SPORT DESIGN",
-  "SPORT PACKAGE",
-  "R-DESIGN",
-  "R-DYNAMIC",
-  "S-DESIGN",
-  "TECHNOLOGY PACKAGE",
-  "TECHNOLOGY",
-  "TECH PACKAGE",
-  "TECH",
-  "PREMIUM PACKAGE",
-  "PREMIUM",
-  "PREMIUM PLUS",
-  "A-SPEC",
-  "A SPEC",
-  "EX-L",
-  "X-LINE",
-  "GT-LINE",
-  "E-TRON",
-  "SELECT",
-  "DYNAMIC",
-  "ADVANCE",
-  "ADVANCE PLUS",
-  "ELITE",
-  "LIMITED",
-  "EXCLUSIVE",
-  "ULTIMATE",
-  "SIGNATURE",
-  "AVENIR",
-  "TITANIUM",
-  "PLATINUM",
-  "COMPETITION",
-  "VELOCE",
-  "QUADRIFOGLIO",
-  "QV",
-  "TI",
-  "SPRINT",
-  "ESTREMA",
-  "COMPETIZIONE",
-  "LUXURY",
-  "EXCELLENCE",
-  "EXECUTIVE",
-  "AVANTGARDE",
-  "PROGRESSIVE",
-  "AMBITION",
-  "LARAMIE",
-  "LARAMIE LONGHORN",
-  "KING RANCH",
-  "LARIAT",
-  "RAPTOR",
-  "REBEL",
-  "SAHARA",
-  "RUBICON",
-  "TRAIL BOSS",
-  "HIGH COUNTRY",
-  "Z71",
-  "ZR2",
-  "DENALI",
-  "AT4",
-  "RST",
-  "LTZ",
-  "LT",
-  "LS",
-  "TRADESMAN",
-  "BIG HORN",
-  "LONGHORN",
-  "TEXAS",
-  "POWER WAGON",
-  "TREMOR",
-  "WILDTRAK",
-  "BADLANDS",
-  "PRO-4X",
-  "PRO-X",
-  "MIDNIGHT",
-  "PLATINUM RESERVE",
-  "WORK TRUCK",
-  "WT",
-  "CUSTOM",
-  "TRAIL",
-  "BASE",
-  "SE",
-  "SEL",
-  "SEL PLUS",
-  "S",
-  "SV",
-  "SL",
-  "SR",
-  "SR5",
-  "LE",
-  "XLE",
-  "XSE",
-  "XL",
-  "XLT",
-  "STX",
-  "DX",
-  "LX",
-  "EX",
-  "SI",
-  "TOURING",
-  "GRAND TOURING",
-  "SPORT TOURING",
-  "SLE",
-  "SLT",
-  "TERRAIN",
-  "ELEVATION",
-  "VALUE",
-  "ESSENTIAL",
-  "CORE",
-  "ESSENCE",
-  "PREFERRED",
-  "PREFERRED II",
-  "ACTIVE",
-  "ALLURE",
-  "FELINE",
-  "GRIFFE",
-  "TREND",
-  "STYLE",
-  "ELEGANCE",
-  "INTENS",
-  "ZEN",
-  "LIFE",
-  "EMOTION",
-  "REFERENCE",
-  "XCELLENCE",
-  "FR",
-  "CUPRA",
-  "TEKNA",
-  "ACENTA",
-  "VISIA",
-  "N-CONNECTA",
-  "SPECIAL EDITION",
-  "EDICION ESPECIAL",
-  "ANNIVERSARY",
-  "ANIVERSARIO",
-  "BLACK EDITION",
-  "DARK EDITION",
-  "NIGHT EDITION",
-  "MIDNIGHT EDITION",
-  "SPORT EDITION",
-  "LAUNCH EDITION",
-  "FIRST EDITION",
-  "LIMITED EDITION",
-  "EXCLUSIVE EDITION",
-  "AUTOBIOGRAPHY",
-  "VOGUE",
-  "VELAR",
-  "EVOQUE",
-  "DISCOVERY",
-  "HSE",
-  "SVR",
-  "SVO",
-  "SVX",
-  "QUADRA-TRAC",
-  "TRAILHAWK",
-  "OVERLAND",
-  "SUMMIT",
-  "COOPER",
-  "COUNTRYMAN",
-  "CLUBMAN",
-  "ICONIC",
-  "RESERVE",
-  "PERFORMANCE",
-  "INDIVIDUAL",
-  "INSCRIPTION",
-  "MOMENTUM",
-  "POLESTAR",
-  "WORK",
-  "TRABAJO",
-  "CARGO",
-  "COMMERCIAL",
-  "PRO",
-  "PRO MASTER",
-  "PROMASTER",
-]);
-
-// Lista blanca adicional y por marca
-const TRIMS_MULTI = new Set([
-  "R LINE",
-  "R-LINE",
-  "WOLFSBURG EDITION",
-  "HIGHLINE PLUS",
-  "ALLTRACK",
-]);
-const TRIMS_SINGLE = new Set([
-  "SPORT",
-  "BASE",
-  "GL",
-  "GLS",
-  "GLI",
-  "GTI",
-  "GTD",
-  "GTE",
-  "TRENDLINE",
-  "COMFORTLINE",
-  "HIGHLINE",
-  "WOLFSBURG",
-  "ALLTRACK",
-]);
-const VERSIONES_VALIDAS_POR_MARCA = {
-  VOLKSWAGEN: new Set([
-    "TRENDLINE",
-    "COMFORTLINE",
-    "HIGHLINE",
-    "R LINE",
-    "R-LINE",
-    "WOLFSBURG",
-    "WOLFSBURG EDITION",
-    "ALLTRACK",
-    "GLI",
-    "GTI",
-    "GTD",
-    "GTE",
-  ]),
-};
-
-// Stopwords del dominio que NUNCA son trims
-const TOKENS_SERVICIO = new Set([
-  "SERVPUB",
-  "SERV PUB",
-  "SERVICIO PUBLICO",
-  "SERV PUBLICO",
-]);
-const TOKENS_MULTIMEDIA = new Set([
-  "RADIO",
-  "NAVEGACION",
-  "PANTALLA",
-  "TOUCH",
-  "TOUCHSCREEN",
-]);
-
-// =====================================================
-// NORMALIZADORES BÁSICOS
-// =====================================================
-function normalizarMarca(marca) {
-  if (!marca) return "";
-  const m = normalizarTexto(marca);
-  for (const [estandar, sinonimos] of Object.entries(MARCAS_SINONIMOS)) {
-    if (sinonimos.some((s) => m === s || m.includes(s))) return estandar;
-  }
-  if (m === "TRACTOS") return "TRACTOS";
-  if (m === "REMOLQUES") return "REMOLQUES";
-  if (m.includes("CHASIS CABINA")) return "CHASIS CABINA";
-  return m;
+function applyProtectedTokens(value = "") {
+  let output = value;
+  PROTECTED_HYPHEN_TOKENS.forEach(({ regex, placeholder }) => {
+    output = output.replace(regex, placeholder);
+  });
+  return output;
 }
 
-function normalizarModelo(modelo, marca) {
-  if (!modelo) return "";
-  let mod = normalizarTexto(modelo);
-  const brand = normalizarTexto(marca);
-  if (mod.startsWith(brand + " ")) mod = mod.substring(brand.length + 1);
-  mod = mod.replace(/^SERIE\s+(\d+)/, "$1 SERIES");
-  mod = mod.replace(/^CLASE\s+([A-Z])/, "CLASE $1");
-  return mod;
+function restoreProtectedTokens(value = "") {
+  let output = value;
+  PROTECTED_HYPHEN_TOKENS.forEach(({ placeholder, canonical }) => {
+    const placeholderRegex = new RegExp(placeholder, "g");
+    output = output.replace(placeholderRegex, canonical);
+  });
+  return output;
 }
 
-function normalizarTransmision(codigoTrans, transmisionValor) {
-  if (codigoTrans) {
-    const c = String(codigoTrans).toUpperCase();
-    if (c === "A" || c === "T") return "AUTO";
-    if (c === "S" || c === "M") return "MANUAL";
-  }
-  if (transmisionValor !== undefined && transmisionValor !== null) {
-    const v = Number(transmisionValor);
-    if (v === 2) return "AUTO";
-    if (v === 1) return "MANUAL";
-  }
-  return null;
+function normalizeStandaloneLiters(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value
+    .replace(/\b(\d+\.\d+)\s+L\b/g, "$1L")
+    .replace(/\b(\d+\.\d+)(?=\s|$)/g, (match) => {
+      const liters = parseFloat(match);
+      if (!Number.isFinite(liters) || liters <= 0 || liters > 12) return match;
+      return `${match}L`;
+    });
 }
 
-function extraerMotorConfig(versionCompleta) {
-  if (!versionCompleta) return null;
-  const t = versionCompleta.toUpperCase();
-  const m = t.match(/\b([VLIHB])(2|3|4|5|6|8|10|12)\b/);
-  if (m) return `${m[1]}${m[2]}`;
-  if (/\b(ELECTRICO|ELECTRIC|EV)\b/.test(t)) return "ELECTRIC";
-  if (/\b(PHEV)\b/.test(t)) return "PHEV";
-  if (/\b(MHEV)\b/.test(t)) return "MHEV";
-  if (/\b(HYBRID|HIBRIDO|HEV)\b/.test(t)) return "HYBRID";
-  return null;
+function normalizeDrivetrain(value = "") {
+  return value
+    .replace(/\bALL[-\s]?WHEEL DRIVE\b/g, "AWD")
+    .replace(/\b4MATIC\b/g, "AWD")
+    .replace(/\bQUATTRO\b/g, "AWD")
+    .replace(/\bTRACCION\s+TOTAL\b/g, "AWD")
+    .replace(/\bAWD\b/g, "AWD")
+    .replace(/\b4\s*X\s*4\b/g, "4WD")
+    .replace(/\b4\s*WD\b/g, "4WD")
+    .replace(/\b4\s*WHEEL DRIVE\b/g, "4WD")
+    .replace(/\bTRACCION\s+4X4\b/g, "4WD")
+    .replace(/\bFRONT[-\s]?WHEEL DRIVE\b/g, "FWD")
+    .replace(/\bTRACCION\s+DELANTERA\b/g, "FWD")
+    .replace(/\bFWD\b/g, "FWD")
+    .replace(/\bREAR[-\s]?WHEEL DRIVE\b/g, "RWD")
+    .replace(/\bTRACCION\s+TRASERA\b/g, "RWD")
+    .replace(/\b4\s*X\s*2\b/g, "RWD")
+    .replace(/\b2WD\b/g, "RWD")
+    .replace(/\bRWD\b/g, "RWD");
 }
 
-// =====================================================
-// CARROCERÍA: v3.3.1 (prioridad WAGON/SPORTWAGEN)
-// =====================================================
-function inferirCarroceria(versionCompleta, modelo) {
-  const texto = normalizarTexto(versionCompleta || "");
-  const modeloNorm = normalizarTexto(modelo || "");
-  if (!texto && !modeloNorm) return null;
-
-  // 1) Señales FUERTES de WAGON primero (return inmediato)
-  const WAGON_SYNONYMS = [
-    "SPORTWAGEN",
-    "SPORT WAGEN",
-    "SPORTWAGON",
-    "SPORT WAGON",
-    "STATION WAGON",
-    "WAGON",
-    "ESTATE",
-    "FAMILIAR",
-    "AVANT",
-    "TOURING",
-  ];
-  for (const w of WAGON_SYNONYMS) {
-    const re = new RegExp(`(^|\s)${escapeRegex(w)}(\s|$)`);
-    if (re.test(texto)) return "WAGON";
-  }
-
-  // 2) Señales FUERTES de PICKUP por cabina
-  if (
-    /(^|\s)(CREW\s*CAB|DOUBLE\s*CAB|EXTENDED\s*CAB|REG(?:ULAR)?\s*CAB|CLUB\s*CAB|SINGLE\s*CAB|DOBLE\s*CABINA|CAB\s*REG|CABINA\s*SENCILLA)(\s|$)/.test(
-      texto
-    )
-  ) {
-    return "PICKUP";
-  }
-
-  // 3) Coincidencias por diccionario (excluyendo tokens de puertas en esta etapa)
-  const DOOR_TOKENS_SEDAN = ["4P", "4 PUERTAS", "4DR"];
-  const DOOR_TOKENS_HB = [
-    "3P",
-    "5P",
-    "3 PUERTAS",
-    "5 PUERTAS",
-    "HB",
-    "HATCHBACK",
-  ];
-
-  function hasKw(tipo, keywords) {
-    const skip = new Set(
-      tipo === "SEDAN"
-        ? DOOR_TOKENS_SEDAN
-        : tipo === "HATCHBACK"
-        ? DOOR_TOKENS_HB
-        : []
-    );
-    return keywords.some(
-      (kw) =>
-        !skip.has(kw) &&
-        new RegExp(`(^|\s)${escapeRegex(kw)}(\s|$)`).test(texto)
-    );
-  }
-
-  // Orden: SUV, COUPE, CONVERTIBLE, VAN, CAMION (HATCHBACK/SEDAN se evalúan con puertas al final)
-  const ORDER = ["SUV", "COUPE", "CONVERTIBLE", "VAN", "CAMION"];
-  for (const tipo of ORDER) {
-    const keywords = CARROCERIA_KEYWORDS[tipo] || [];
-    if (hasKw(tipo, keywords)) return tipo;
-  }
-
-  // 4) Heurística por puertas (última prioridad)
-  if (
-    new RegExp(
-      `(^|\s)(${DOOR_TOKENS_SEDAN.map(escapeRegex).join("|")})(\s|$)`
-    ).test(texto)
-  ) {
-    return "SEDAN";
-  }
-  if (
-    new RegExp(
-      `(^|\s)(${DOOR_TOKENS_HB.map(escapeRegex).join("|")})(\s|$)`
-    ).test(texto)
-  ) {
-    return "HATCHBACK";
-  }
-
-  // 5) Fallback por modelo conocido (ligero)
-  const SUVS_CONOCIDOS = [
-    "CR-V",
-    "CRV",
-    "RAV4",
-    "RAV 4",
-    "TUCSON",
-    "SPORTAGE",
-    "X-TRAIL",
-    "XTRAIL",
-    "TIGUAN",
-    "Q5",
-    "Q3",
-    "Q7",
-    "Q8",
-    "X3",
-    "X5",
-    "X1",
-    "X6",
-    "X7",
-    "EXPLORER",
-    "HIGHLANDER",
-    "PILOT",
-    "TAHOE",
-    "SUBURBAN",
-    "EXPEDITION",
-    "TRAVERSE",
-    "EQUINOX",
-    "BLAZER",
-    "TRAILBLAZER",
-    "EDGE",
-    "ESCAPE",
-    "BRONCO",
-    "BRONCO SPORT",
-    "4RUNNER",
-    "LAND CRUISER",
-    "SEQUOIA",
-    "PATHFINDER",
-    "MURANO",
-    "ROGUE",
-    "KICKS",
-    "JUKE",
-    "ARMADA",
-    "CX-5",
-    "CX-3",
-    "CX-30",
-    "CX-50",
-    "CX-9",
-    "CX-90",
-    "COMPASS",
-    "CHEROKEE",
-    "GRAND CHEROKEE",
-    "WRANGLER",
-    "RENEGADE",
-    "DURANGO",
-    "JOURNEY",
-    "ECOSPORT",
-    "KUGA",
-    "TERRITORY",
-    "GLC",
-    "GLE",
-    "GLS",
-    "GLB",
-    "GLA",
-    "EQC",
-    "EQE",
-    "EQS",
-    "MACAN",
-    "CAYENNE",
-    "RDX",
-    "MDX",
-    "ZDX",
-    "ADX",
-  ];
-  const PICKUPS_CONOCIDAS = [
-    "F-150",
-    "F150",
-    "F-250",
-    "F250",
-    "F-350",
-    "F350",
-    "RAM",
-    "RAM 1500",
-    "RAM 2500",
-    "RAM 3500",
-    "RAM 700",
-    "SILVERADO",
-    "SIERRA",
-    "TACOMA",
-    "HILUX",
-    "RANGER",
-    "FRONTIER",
-    "COLORADO",
-    "TUNDRA",
-    "TITAN",
-    "RIDGELINE",
-    "GLADIATOR",
-    "LOBO",
-    "CHEYENNE",
-    "AMAROK",
-    "MAVERICK",
-    "LIGHTNING",
-    "CYBERTRUCK",
-    "RIVIAN R1T",
-    "HUMMER EV",
-  ];
-  const SEDANS_CONOCIDOS = [
-    "ILX",
-    "TLX",
-    "RLX",
-    "ACCORD",
-    "CIVIC",
-    "CITY",
-    "CAMRY",
-    "COROLLA",
-    "AVALON",
-    "ALTIMA",
-    "SENTRA",
-    "MAXIMA",
-    "JETTA",
-    "PASSAT",
-    "ARTEON",
-    "ELANTRA",
-    "SONATA",
-    "ACCENT",
-  ];
-
-  if (SUVS_CONOCIDOS.some((s) => modeloNorm.includes(normalizarTexto(s))))
-    return "SUV";
-  if (PICKUPS_CONOCIDAS.some((s) => modeloNorm.includes(normalizarTexto(s))))
-    return "PICKUP";
-  if (SEDANS_CONOCIDOS.some((s) => modeloNorm === normalizarTexto(s)))
-    return "SEDAN";
-
-  return null;
+function normalizeEngineDisplacement(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value
+    .replace(/\b(\d)(\d)L\b/g, "$1.$2L")
+    .replace(/\b(?<!\d\.)\d+L\b/g, (match) => `${match.slice(0, -1)}.0L`)
+    .replace(/\b(?<!\d\.)\d+\s+L\b/g, (match) => {
+      const digits = match.match(/\d+/)[0];
+      return `${digits}.0L`;
+    });
 }
 
-function extraerTraccion(versionCompleta) {
-  if (!versionCompleta) return null;
-  const t = versionCompleta.toUpperCase();
-  if (/\b4X4\b/.test(t) || /\b4WD\b/.test(t)) return "4X4";
-  if (/\b4X2\b/.test(t) || /\b2WD\b/.test(t)) return "4X2";
-  if (/\bAWD\b/.test(t)) return "AWD";
-  if (/\bFWD\b/.test(t)) return "FWD";
-  if (/\bRWD\b/.test(t)) return "RWD";
-  if (/\b(4MATIC|XDRIVE|QUATTRO|4MOTION|ALL4)\b/.test(t)) return "AWD";
-  return null;
+function normalizeCylinders(value = "") {
+  if (!value || typeof value !== "string") return "";
+  let normalized = value;
+  Object.entries(
+    QUALITAS_NORMALIZATION_DICTIONARY.cylinder_normalization
+  ).forEach(([from, to]) => {
+    const regex = new RegExp(`\\b${from}\\s*(?=\\d+\\.?\\d*|\\s|$)`, "gi");
+    normalized = normalized.replace(regex, to);
+    const exact = new RegExp(`\\b${from}\\b`, "gi");
+    normalized = normalized.replace(exact, to);
+  });
+  return normalized;
 }
 
-// =====================================================
-// EXTRACCIÓN DE TRIM (lista blanca + stopwords + n-gramas)
-// =====================================================
-function buscarTrim(tokens, marca) {
-  const brand = (marca || "").toString().toUpperCase();
-  const brandSet = VERSIONES_VALIDAS_POR_MARCA[brand] || new Set();
-  const toks = tokens.filter(Boolean);
+function cleanVersionString(versionString, model = "") {
+  if (!versionString || typeof versionString !== "string") return "";
 
-  // 3-gramas y 2-gramas
-  for (let n = 3; n >= 2; n--) {
-    for (let i = 0; i <= toks.length - n; i++) {
-      const g = toks
-        .slice(i, i + n)
-        .join(" ")
-        .trim();
-      if (VERSIONES_VALIDAS.has(g) || TRIMS_MULTI.has(g) || brandSet.has(g))
-        return g;
+  let cleaned = versionString.toUpperCase().trim();
+  cleaned = applyProtectedTokens(cleaned);
+  cleaned = cleaned.replace(/\bRA-?(\d+)\b/g, "R$1");
+  cleaned = cleaned.replace(/[\/,]/g, " ");
+  cleaned = cleaned.replace(/-/g, " ");
+
+  cleaned = normalizeDrivetrain(cleaned);
+  cleaned = normalizeCylinders(cleaned);
+
+  QUALITAS_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.forEach(
+    (token) => {
+      cleaned = cleaned.replace(new RegExp(`\\b${token}\\b`, "gi"), " ");
     }
-  }
-  // Unigramas
-  for (const u of toks) {
-    if (VERSIONES_VALIDAS.has(u) || TRIMS_SINGLE.has(u) || brandSet.has(u))
-      return u;
-  }
-  return null;
-}
+  );
 
-function extraerVersion(versionCompleta, marca) {
-  if (!versionCompleta) return null;
-  let v = normalizarTexto(versionCompleta);
-
-  // Casos triviales sin versión real
-  if (
-    v === "AUT" ||
-    v === "STD" ||
-    v === "MANUAL" ||
-    v === "AUTO" ||
-    /^(AUT|STD|MANUAL|AUTO)[\.,]\s*\d+\s*OCUP/.test(v)
-  )
-    return null;
-
-  // 1) Ocupantes
-  v = v
-    .replace(/[\.,]\s*\d+\s*OCUP\.?$/g, "")
-    .replace(/\s+\d+\s*OCUP\.?$/g, "")
-    .replace(/\s+OCUP$/g, "");
-
-  // 2) Transmisiones (ANTES de parsear)
-  for (const t of TIPOS_TRANSMISION)
-    v = v.replace(new RegExp(`\\b${escapeRegex(t)}\\b`, "gi"), " ");
-  v = v
-    .replace(/[\.,]\s*(AUT|STD|MANUAL|AUTO|CVT|MT|AT|MAN)\.?$/gi, "")
-    .replace(
-      /\s+\d+\s*(VEL|SPEED|VELOCIDADES?|MARCHAS?|CAMBIOS?)(\s+|$)/gi,
+  if (model) {
+    cleaned = cleaned.replace(
+      new RegExp(`\\b${model.toUpperCase()}\\b`, "gi"),
       " "
     );
+  }
 
-  // 3) Especificaciones técnicas (orden crítico)
-  v = v
-    // motor + cilindrada
-    .replace(/\b[VLI]\d+\s+\d+\.\d+[TL]?\b/g, " ")
-    .replace(/\b[VLI]\d+\s+\d+[TL]?\b/g, " ")
-    .replace(/\b\d+\.\d+[TL]?\s+[VLI]\d+\b/g, " ")
-    // cilindradas decimales o ENTERAS con T|L + decimales sueltos
-    .replace(/\b\d+(?:\.\d+)?[TL]\b/g, " ")
-    .replace(/\b\d+\.\d+\b/g, " ")
-    .replace(/\s+[TL]\b/g, " ")
-    // config motor
-    .replace(/\b[VLI]\d+\b/g, " ")
-    .replace(/\bH\d+\b/g, " ")
-    // puertas y tonelaje
-    .replace(/\b\d+P\b/g, " ")
-    .replace(/\b\d+\s*PUERTAS?\b/g, " ")
-    .replace(/\b\d+\s*PTAS?\b/g, " ")
-    .replace(/\b\d+(?:\.\d+)?\s*TONS?\b/gi, " ")
-    // potencia
-    .replace(/\b\d+\s*(HP|PS|KW)\b/gi, " ")
-    // tracción
+  cleaned = cleaned
+    .replace(/\bHB\b/g, "HATCHBACK")
+    .replace(/\bTUR\b/g, "TURBO")
+    .replace(/\bCONV\b/g, "CONVERTIBLE");
+
+  cleaned = normalizeEngineDisplacement(cleaned);
+  cleaned = normalizeStandaloneLiters(cleaned);
+
+  cleaned = cleaned.replace(/(?<!\d)[.,](?!\d)/g, " ");
+
+  Object.values(QUALITAS_NORMALIZATION_DICTIONARY.regex_patterns).forEach(
+    (pattern) => {
+      if (
+        pattern !==
+          QUALITAS_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces &&
+        pattern !== QUALITAS_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces
+      ) {
+        cleaned = cleaned.replace(pattern, " ");
+      }
+    }
+  );
+  cleaned = cleaned
     .replace(
-      /\b(4X4|4X2|AWD|FWD|RWD|4WD|2WD|4MATIC|XDRIVE|QUATTRO|4MOTION|ALL4)\b/g,
+      QUALITAS_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
       " "
     )
-    // tecnologías motor
-    .replace(
-      /\b(TURBO|TBO|BITBO|TDI|TSI|TFSI|FSI|GDI|MHEV|HEV|PHEV|DIESEL|HYBRID|ELECTRICO|ELECTRIC)\b/g,
-      " "
-    )
-    // accesorios/códigos/materiales
-    .replace(
-      /\b(BA|ABS|AC|AA|EBD|ESP|TCS|VSC|QC|VP|NAVI|GPS|CD|DVD|MP3|USB|BT|BLUETOOTH)\b/g,
-      " "
-    )
-    .replace(/\b(ONSTAR|BEDLINER|LEATHERETTE|PIEL|LEATHER|CLOTH|TELA)\b/g, " ")
-    .replace(/\bR\d{2}\b/g, " ")
-    .replace(/\b(CAM\s*TRAS|CAM\s*VIS\s*TRAS)\b/g, " ")
-    .replace(/\b\d+AC\b/g, " ")
-    .replace(/\b(IMP|FBX|FN|RA|DH|CB|CE|CA|CQ)\b/g, " ");
+    .replace(QUALITAS_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces, "");
 
-  // 4) Carrocerías → NO deben quedar en 'version'
-  v = v
-    .replace(
-      /\b(SEDAN|HATCHBACK|SUV|PICKUP|COUPE|CONVERTIBLE|VAN|WAGON)\b/g,
-      " "
-    )
-    .replace(/\bSPORT\s*WAGEN\b/g, " ")
-    .replace(/\bSPORTWAGEN\b/g, " ")
-    .replace(/\bSPORT\s*WAGON\b/g, " ")
-    .replace(/\bSPORTWAGON\b/g, " ");
-
-  // 5) Ruido operativo (servicio, multimedia) y códigos con '/'
-  for (const tk of TOKENS_SERVICIO)
-    v = v.replace(new RegExp(`\\b${escapeRegex(tk)}\\b`, "g"), " ");
-  for (const tk of TOKENS_MULTIMEDIA)
-    v = v.replace(new RegExp(`\\b${escapeRegex(tk)}\\b`, "g"), " ");
-  v = v
-    .replace(/\b[VT]\/P\b/g, " ")
-    .replace(/\b\/P\b/g, " ")
-    .replace(/\bVP\b/g, " ")
-    .replace(/\bTP\b/g, " ");
-
-  // 6) Limpieza final → tokens
-  v = v
-    .replace(/[,.•;:]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!v) return null;
-  const tokens = v.split(" ").filter(Boolean);
-
-  // 7) Lista blanca (multi → single), con catálogo por marca
-  const trim = buscarTrim(tokens, marca);
-  if (trim) return trim;
-
-  // 8) Gating: si tras limpiar no hay un trim válido, regresamos null
-  return null;
+  cleaned = restoreProtectedTokens(cleaned);
+  cleaned = cleaned.replace(/CIL(?=\d)/g, "CIL ");
+  cleaned = cleaned.replace(/\b(\d+)\s+O\b/g, "$1OCUP");
+  cleaned = cleaned.replace(/\b(\d+)\s+OCU\b/g, "$1OCUP");
+  cleaned = cleaned.replace(/\b(\d+)\s+OC\b/g, "$1OCUP");
+  cleaned = cleaned.replace(/\b(\d+)\s*HP\b/g, "$1HP");
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  return cleaned;
 }
 
-// =====================================================
-// PROCESAMIENTO PRINCIPAL PARA N8N
-// =====================================================
-function procesarRegistro(registro) {
-  const marca = normalizarMarca(registro.marca);
-  const modelo = normalizarModelo(registro.modelo, marca);
-  const anio = registro.anio != null ? parseInt(registro.anio) : null;
-  const transmision = normalizarTransmision(
-    registro.transmision_codigo,
-    registro.transmision_valor
+function extractDoorsAndOccupants(versionOriginal = "") {
+  const doorsMatch = versionOriginal.match(/\b(\d)\s*P(?:TAS?|TS?|TA)?\.?\b/i);
+  const occMatch = versionOriginal.match(
+    /\b0?(\d+)\s*(?:OC|OCU|OCUP|OCUP\.?|O\.?)\b/i
   );
-  const motorConfig = extraerMotorConfig(registro.version_completa);
-  const carroceria = inferirCarroceria(registro.version_completa, modelo);
-  const traccion = extraerTraccion(registro.version_completa);
-  const version = extraerVersion(registro.version_completa, marca);
-
-  const stringComercial = [marca, modelo, anio, transmision]
-    .filter(Boolean)
-    .join("|");
-  const stringTecnico = [
-    marca,
-    modelo,
-    anio,
-    transmision,
-    version,
-    motorConfig,
-    carroceria,
-    traccion,
-  ]
-    .filter(Boolean)
-    .join("|");
-
-  const hashComercial = generarHash(marca, modelo, anio, transmision);
-  const idCanonico = generarHash(
-    marca,
-    modelo,
-    anio,
-    transmision,
-    version,
-    motorConfig,
-    carroceria,
-    traccion
-  );
-
   return {
-    id_canonico: idCanonico,
-    hash_comercial: hashComercial,
-    string_comercial: stringComercial,
-    string_tecnico: stringTecnico,
-
-    marca: marca,
-    modelo: modelo,
-    anio: anio,
-    transmision: transmision,
-    version: version, // solo trim cuando existe, si no null
-    motor_config: motorConfig,
-    carroceria: carroceria,
-    traccion: traccion,
-
-    origen_aseguradora: ASEGURADORA,
-    id_original: String(registro.id_original),
-    version_original: registro.version_completa,
-    activo:
-      registro.activo === true ||
-      String(registro.activo).toLowerCase() === "true" ||
-      Number(registro.activo) === 1,
+    doors: doorsMatch ? `${doorsMatch[1]}PUERTAS` : "",
+    occupants: occMatch ? `${parseInt(occMatch[1], 10)}OCUP` : "",
   };
 }
 
-// N8N I/O — Function (Run once for all items) o Function Item
-const out = [];
-for (const item of $input.all()) {
-  try {
-    out.push({ json: procesarRegistro(item.json) });
-  } catch (e) {
-    out.push({
-      json: { error: true, mensaje: e.message, registro_original: item.json },
-    });
-  }
+function normalizeTransmission(code) {
+  if (!code || typeof code !== "string") return "";
+  const normalized = code.toUpperCase().trim();
+  return (
+    QUALITAS_NORMALIZATION_DICTIONARY.transmission_normalization[normalized] ||
+    normalized
+  );
 }
-return out;
+
+function inferTransmissionFromVersion(versionOriginal = "") {
+  const version = (versionOriginal || "").toUpperCase();
+  for (const token of Object.keys(
+    QUALITAS_NORMALIZATION_DICTIONARY.transmission_normalization
+  )) {
+    if (new RegExp(`\\b${token}\\b`, "i").test(version)) {
+      return normalizeTransmission(token);
+    }
+  }
+  return "";
+}
+
+const BATCH_SIZE = 5000;
+
+function normalizeQualitasData(records = []) {
+  const results = [];
+  const errors = [];
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    const batch = records.slice(i, i + BATCH_SIZE);
+    for (const record of batch) {
+      try {
+        results.push(processQualitasRecord(record));
+      } catch (error) {
+        errors.push({
+          error: true,
+          mensaje: error.message,
+          id_original: record.id_original,
+          codigo_error: categorizeError(error),
+          registro_original: record,
+          fecha_error: new Date().toISOString(),
+        });
+      }
+    }
+  }
+  return { results, errors };
+}
+
+function normalizeQualitasRecords(items = []) {
+  const rawRecords = items.map((it) => (it && it.json ? it.json : it));
+  const { results, errors } = normalizeQualitasData(rawRecords);
+  return [
+    ...results.map((r) => ({ json: r })),
+    ...errors.map((e) => ({ json: e })),
+  ];
+}
+
+function processQualitasRecord(record) {
+  const derivedTransmission =
+    normalizeTransmission(record.transmision) ||
+    inferTransmissionFromVersion(record.version_original);
+  record.transmision = derivedTransmission;
+
+  const { doors, occupants } = extractDoorsAndOccupants(
+    record.version_original || ""
+  );
+  const validation = validateRecord(record);
+  if (!validation.isValid) {
+    throw new Error(`Validation failed: ${validation.errors.join(", ")}`);
+  }
+
+  let versionLimpia = cleanVersionString(
+    record.version_original || "",
+    record.modelo || ""
+  );
+  versionLimpia = versionLimpia
+    .replace(/\b\d\s*P(?:TAS?|TS?|TA)?\.?\b/gi, " ")
+    .replace(/\b0?\d+\s*(?:OC|OCU|OCUP|OCUP\.?|O\.?)\b/gi, " ")
+    .replace(/\s+[.,](?=\s|$)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const tokens = versionLimpia.split(" ").filter((token, idx, arr) => {
+    if (!token) return false;
+    if (/^[.,]$/.test(token)) return false;
+    if (/^\d+$/.test(token)) {
+      const next = arr[idx + 1] || "";
+      if (/^\d+OCUP$/i.test(next) || /^OCUP$/i.test(next)) return false;
+    }
+    return true;
+  });
+  versionLimpia = tokens.join(" ");
+  versionLimpia = versionLimpia.replace(/\s+/g, " ").trim();
+
+  versionLimpia = [versionLimpia, doors, occupants]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  const normalized = {
+    origen_aseguradora: "QUALITAS",
+    id_original: record.id_original,
+    marca: normalizeText(record.marca),
+    modelo: normalizeText(record.modelo),
+    anio: record.anio,
+    transmision: record.transmision,
+    version_original: record.version_original,
+    version_limpia: versionLimpia,
+    fecha_procesamiento: new Date().toISOString(),
+  };
+  normalized.hash_comercial = createCommercialHash(normalized);
+  return normalized;
+}
+
+function createCommercialHash(vehicle) {
+  const key = [
+    vehicle.marca || "",
+    vehicle.modelo || "",
+    vehicle.anio ? vehicle.anio.toString() : "",
+    vehicle.transmision || "",
+  ]
+    .join("|")
+    .toLowerCase()
+    .trim();
+  return crypto.createHash("sha256").update(key).digest("hex");
+}
+
+function validateRecord(record) {
+  const errors = [];
+  if (!record.marca || record.marca.trim() === "")
+    errors.push("marca is required");
+  if (!record.modelo || record.modelo.trim() === "")
+    errors.push("modelo is required");
+  if (!record.anio || record.anio < 2000 || record.anio > 2030)
+    errors.push("anio must be between 2000-2030");
+  if (!record.version_original || record.version_original.trim() === "")
+    errors.push("version is required");
+  if (!record.transmision || record.transmision.trim() === "")
+    errors.push("transmision is required");
+  return { isValid: errors.length === 0, errors };
+}
+
+function normalizeText(value) {
+  return value ? value.trim().toUpperCase() : "";
+}
+
+function categorizeError(error) {
+  const message = error.message.toLowerCase();
+  if (message.includes("validation")) return "VALIDATION_ERROR";
+  if (message.includes("hash")) return "HASH_GENERATION_ERROR";
+  return "NORMALIZATION_ERROR";
+}
+
+const outputItems = normalizeQualitasRecords(items);
+return outputItems;
