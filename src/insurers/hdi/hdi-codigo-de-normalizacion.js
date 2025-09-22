@@ -228,7 +228,6 @@ const PROTECTED_HYPHEN_TOKENS = [
     canonical: "S-LINE",
   },
 ];
-
 function applyProtectedTokens(value = "") {
   let output = value;
   PROTECTED_HYPHEN_TOKENS.forEach(({ regex, placeholder }) => {
@@ -246,7 +245,118 @@ function restoreProtectedTokens(value = "") {
   return output;
 }
 
+const TRANSMISSION_TOKENS = new Set(
+  Object.keys(HDI_NORMALIZATION_DICTIONARY.transmission_normalization)
+);
 
+function parseHdiVersionSegments(versionOriginal = "") {
+  const info = {
+    trimSegment: "",
+    engineSegment: "",
+    displacementSegment: "",
+    horsepowerSegment: "",
+    doorsSegment: "",
+    transmissionSegment: "",
+    extras: [],
+    rawSegments: [],
+    normalizedSegments: [],
+    orderedSegments: [],
+  };
+
+  if (!versionOriginal || typeof versionOriginal !== "string") {
+    return info;
+  }
+
+  const segments = versionOriginal
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (segments.length === 0) {
+    return info;
+  }
+
+  info.rawSegments = segments.slice();
+
+  const transmissionTokens = Array.from(TRANSMISSION_TOKENS);
+
+  segments.forEach((segment, index) => {
+    const normalizedSegment = segment
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!normalizedSegment) {
+      return;
+    }
+
+    info.normalizedSegments.push(normalizedSegment);
+
+    const looksLikeEngineConfig = /\b(?:L|V|I|R|H|B)\d{1,2}\b/.test(
+      normalizedSegment
+    );
+    if (!info.engineSegment && looksLikeEngineConfig) {
+      info.engineSegment = normalizedSegment;
+      return;
+    }
+
+    const looksLikeDisplacement = /\b\d+(?:\.\d+)?\s*(?:L|T)\b/.test(
+      normalizedSegment
+    );
+    if (!info.displacementSegment && looksLikeDisplacement) {
+      info.displacementSegment = normalizedSegment;
+      return;
+    }
+
+    const looksLikeHorsepower = /\b\d+\s*(?:CP|HP|C\.P\.|H\.P\.)\b/.test(
+      normalizedSegment
+    );
+    if (!info.horsepowerSegment && looksLikeHorsepower) {
+      info.horsepowerSegment = normalizedSegment;
+      return;
+    }
+
+    const looksLikeDoors = /\b\d+\s*PUERTAS?\b/.test(normalizedSegment);
+    if (!info.doorsSegment && looksLikeDoors) {
+      info.doorsSegment = normalizedSegment;
+      return;
+    }
+
+    if (!info.transmissionSegment) {
+      for (const token of transmissionTokens) {
+        if (normalizedSegment === token || normalizedSegment.includes(token)) {
+          info.transmissionSegment = normalizedSegment;
+          return;
+        }
+      }
+    }
+
+    if (!info.trimSegment && index === 0) {
+      info.trimSegment = normalizedSegment;
+      return;
+    }
+
+    info.extras.push(normalizedSegment);
+  });
+
+  if (!info.trimSegment && info.normalizedSegments.length) {
+    info.trimSegment = info.normalizedSegments[0];
+  }
+
+  info.orderedSegments = [
+    info.trimSegment,
+    info.engineSegment,
+    info.displacementSegment,
+    info.horsepowerSegment,
+    info.doorsSegment,
+    info.transmissionSegment,
+    ...info.extras,
+  ].filter(Boolean);
+
+  return info;
+}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -298,11 +408,14 @@ function normalizeEngineDisplacement(versionString = "") {
 
 function normalizeStandaloneLiters(versionString = "") {
   if (!versionString || typeof versionString !== "string") return "";
-  return versionString.replace(/\b(\d+\.\d+)(?!L\b)(?!\d)(?![A-Z])/g, (match) => {
-    const liters = parseFloat(match);
-    if (!Number.isFinite(liters) || liters <= 0 || liters > 10) return match;
-    return `${match}L`;
-  });
+  return versionString.replace(
+    /\b(\d+\.\d+)(?!L\b)(?!\d)(?![A-Z])/g,
+    (match) => {
+      const liters = parseFloat(match);
+      if (!Number.isFinite(liters) || liters <= 0 || liters > 10) return match;
+      return `${match}L`;
+    }
+  );
 }
 
 function normalizeHorsepower(versionString = "") {
@@ -579,8 +692,15 @@ function createCommercialHash(vehicle) {
 }
 
 function processHdiRecord(record) {
+  const parsedSegments = parseHdiVersionSegments(record.version_original || "");
+
+  const transmissionFromSegment =
+    normalizeTransmission(parsedSegments.transmissionSegment || "") ||
+    inferTransmissionFromVersion(parsedSegments.transmissionSegment || "");
+
   const derivedTransmission =
     normalizeTransmission(record.transmision) ||
+    transmissionFromSegment ||
     inferTransmissionFromVersion(record.version_original);
 
   record.transmision = derivedTransmission;
@@ -588,9 +708,12 @@ function processHdiRecord(record) {
   const marcaNormalizada = normalizeBrand(record.marca || "");
   const modeloNormalizado = normalizeText(record.modelo || "");
 
-  const { doors, occupants } = extractDoorsAndOccupants(
-    record.version_original || ""
+  const segmentDoorData = extractDoorsAndOccupants(
+    parsedSegments.doorsSegment || ""
   );
+  const fullDoorData = extractDoorsAndOccupants(record.version_original || "");
+  const doors = segmentDoorData.doors || fullDoorData.doors;
+  const occupants = segmentDoorData.occupants || fullDoorData.occupants;
 
   const validation = validateRecord({
     ...record,
@@ -601,8 +724,13 @@ function processHdiRecord(record) {
     throw new Error(`Validation failed: ${validation.errors.join(", ")}`);
   }
 
+  const sourceForCleaning =
+    parsedSegments.orderedSegments.length > 0
+      ? parsedSegments.orderedSegments.join(", ")
+      : record.version_original || "";
+
   let versionLimpia = cleanVersionString(
-    record.version_original || "",
+    sourceForCleaning,
     marcaNormalizada,
     modeloNormalizado
   );

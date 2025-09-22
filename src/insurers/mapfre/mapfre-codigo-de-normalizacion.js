@@ -1,9 +1,15 @@
-/**
- * Mapfre ETL – Normalization Code Node
+﻿/**
+ * MAPFRE ETL - Normalization Code Node
  *
- * Limpia campos comprimidos de Mapfre, infiere transmisión, normaliza
- * cilindrada/cilindros y genera `hash_comercial`. Diseñado para un nodo
- * Code de n8n.
+ * Mirrors the Zurich/Qualitas/Atlas pattern while handling MAPFRE's comma-separated specs:
+ * - Splits `version_original` slots (trim, engine config, displacement, horsepower, doors, transmission, extras).
+ * - Infers transmission codes (AUT, STD, CVT, DSG, etc.) when the `transmision` field is empty.
+ * - Preserves hyphenated trims (A-SPEC, S-LINE, TYPE-S) before cleaning and restores them afterward.
+ * - Normalizes compact engine tokens such as `1.0T` -> `1.0L TURBO` and converts horsepower/door counts.
+ * - Strips comfort/audio tokens while keeping the commercial hash inputs and a clean `version_limpia`.
+ *
+ * Use inside an n8n Code node. Emits a flat array of `{ json }`; validation issues
+ * appear with `{ error: true }` so downstream nodes can log or branch.
  */
 const crypto = require("crypto");
 
@@ -11,18 +17,13 @@ const BATCH_SIZE = 5000;
 
 const MAPFRE_NORMALIZATION_DICTIONARY = {
   brand_aliases: {
-    "VOLKSWAGEN VW": "VOLKSWAGEN",
-    "VOLKSWAGEN AG": "VOLKSWAGEN",
-    "VOLKSWAGEN DE MEXICO": "VOLKSWAGEN",
-    "CHEVROLET GM": "CHEVROLET",
-    "GM CHEVROLET": "CHEVROLET",
-    "BMW BW": "BMW",
-    "BMW AG": "BMW",
-    "CHRYSLER-DODGE": "DODGE",
-    "CHRYSLER-DODGE DG": "DODGE",
-    "CHRYSLER DODGE": "DODGE",
-    "MINI COOPER": "MINI",
-    "NISSAN MOTOR": "NISSAN",
+    "GENERAL MOTORS": "GMC",
+    "GENERAL MOTORS 2": "GMC",
+    "GENERAL MOTORS COMPANY": "GMC",
+    "GENERAL MOTORS CORPORATION": "GMC",
+    GMC: "GMC",
+    "JAC SEI": "JAC",
+    "MG ROVER": "MG",
   },
   irrelevant_comfort_audio: [
     "ABS",
@@ -73,6 +74,7 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "D T",
     "D/V",
     "D V",
+    "TM",
     "DIS",
     "PADDLE",
     "KEYLESS",
@@ -83,29 +85,7 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "VE",
     "V.E.",
     "C/A",
-    "PAQ",
-    "PAQ A",
-    "PAQ B",
-    "PAQ C",
-    "PAQ D",
-    "PAQ E",
-    "PAQ M",
-    "PAQ SEG",
-    "PAQ. SEG",
-    "PAQ. D",
-    "PAQ.D",
-    "PAQ D.",
-    "PAQ. A",
-    "PAQ. B",
-    "PAQ. C",
-    "PAQ. D.",
-    "PAQ. E.",
-    "PAQ. M",
-    "PAQ. 1",
-    "PAQ. 2",
-    "PAQ. 3",
-    "Q/C",
-    "BA AA",
+    "S/D",
   ],
   transmission_tokens_to_strip: [
     "AUT",
@@ -113,7 +93,6 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "AUTO",
     "AT",
     "AT.",
-    "TA",
     "AUTOMATICO",
     "AUTOMATICA",
     "AUTOMATIC",
@@ -143,7 +122,6 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "MAN.",
     "STD",
     "STD.",
-    "TM",
     "MECANICO",
     "MECANICA",
     "MECA",
@@ -176,7 +154,6 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
   transmission_normalization: {
     STD: "MANUAL",
     "STD.": "MANUAL",
-    TM: "MANUAL",
     MANUAL: "MANUAL",
     MAN: "MANUAL",
     "MAN.": "MANUAL",
@@ -193,7 +170,6 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     AUTO: "AUTO",
     AT: "AUTO",
     "AT.": "AUTO",
-    TA: "AUTO",
     AUTOMATICO: "AUTO",
     AUTOMATICA: "AUTO",
     AUTOMATIC: "AUTO",
@@ -225,152 +201,162 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     stray_punctuation: /(?<!\d)[\.,;]|[\.,;](?!\d)/g,
   },
 };
-
-const PROTECTED_HYPHEN_TOKENS = { "A-SPEC": "ASPEC" };
-
-const MODEL_TRIM_TOKENS = [
-  "A-SPEC",
-  "ASPEC",
-  "S-LINE",
-  "SLINE",
-  "SPORT",
-  "LIMITED",
-  "PREMIUM",
-  "EXCLUSIVE",
-  "ADVANCE",
-  "ADVANCED",
-  "ACTIVE",
-  "ALLURE",
-  "BASE",
-  "GT",
-  "GL",
-  "GLS",
-  "GLX",
-  "LX",
-  "LE",
-  "SE",
-  "XSE",
-  "XLE",
-  "SR",
-  "SV",
-  "SL",
-  "LT",
-  "LTZ",
-  "L",
-  "S",
-  "TI",
-  "LUSSO",
-  "PLATINUM",
-  "SIGNATURE",
-  "ELITE",
-  "EL",
-  "XDRIVE",
-  "BLACK",
-  "ICONIC",
-  "ESSENCE",
-  "ULTIMATE",
-  "LUXURY",
-  "EXECUTIVE",
-  "PRESTIGE",
-  "CLASSIC",
-  "COOL",
-  "TOP",
-  "PACK",
-  "PAQ",
-  "PLUS",
-  "EDGE",
-  "STYLE",
-  "FR",
-  "REFERENCE",
-  "LITE",
-  "CORE",
-  "MID",
-  "SELECT",
-  "TITANIUM",
-  "VELOCE",
-  "SUPER",
-  "ELX",
-  "TECH",
-  "TECHNOLOGY",
-  "ESSENTIAL",
-  "SPORTLINE",
-  "GRAND",
-  "GR",
-  "TYPE",
-  "TYPE S",
-  "TYPE-S",
-  "S-TYPE",
-  "F-TYPE",
-  "R-DYNAMIC",
-  "R LINE",
-  "R-LINE",
-  "GTI",
-  "GLI",
-  "TRENDLINE",
-  "COMFORTLINE",
-  "HIGHLINE",
-  "TREND",
-  "PRESTIGE",
-  "ICON",
-  "INNOVATION",
-  "PRIME",
+const PROTECTED_HYPHEN_TOKENS = [
+  {
+    regex: /\bA[\s-]?SPEC\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_A_SPEC__",
+    canonical: "A-SPEC",
+  },
+  {
+    regex: /\bTYPE[\s-]?S\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_TYPE_S__",
+    canonical: "TYPE-S",
+  },
+  {
+    regex: /\bTYPE[\s-]?R\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_TYPE_R__",
+    canonical: "TYPE-R",
+  },
+  {
+    regex: /\bTYPE[\s-]?F\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_TYPE_F__",
+    canonical: "TYPE-F",
+  },
+  {
+    regex: /\bS[\s-]?LINE\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_S_LINE__",
+    canonical: "S-LINE",
+  },
 ];
+function applyProtectedTokens(value = "") {
+  let output = value;
+  PROTECTED_HYPHEN_TOKENS.forEach(({ regex, placeholder }) => {
+    output = output.replace(regex, placeholder);
+  });
+  return output;
+}
 
-const MODEL_BREAK_TOKENS = new Set([
-  ...MODEL_TRIM_TOKENS.map((token) => token.replace(/[^A-Z0-9]/g, "")),
-  "TYPE",
-  "TYPES",
-  "AWD",
-  "FWD",
-  "RWD",
-  "4WD",
-  "4X4",
-  "4X2",
-  "2WD",
-  "QUATTRO",
-  "4MATIC",
-  "TORQUE",
-  "MANUAL",
-  "AUT",
-  "TA",
-  "TM",
-  "CVT",
-  "DSG",
-  "TIPTRONIC",
-  "TCT",
-  "TURBO",
-  "TWIN",
-  "BITURBO",
-  "COUPE",
-  "SEDAN",
-  "HATCHBACK",
-  "HB",
-  "SUV",
-  "CROSSOVER",
-  "VAN",
-  "PICKUP",
-  "CAB",
-  "CABINA",
-  "CHASIS",
-  "HYBRID",
-  "HYBRIDO",
-  "HYBRIDA",
-  "HEV",
-  "PHEV",
-  "MHEV",
-  "BEV",
-  "PLUG",
-  "PLUG-IN",
-  "ELECTRIC",
-  "ELECTRICO",
-  "ELECTRICA",
-  "ELECT",
-  "RSPORT",
-  "SPORTBACK",
-  "CABRIO",
-  "ROADSTER",
-  "AWD",
-]);
+function restoreProtectedTokens(value = "") {
+  let output = value;
+  PROTECTED_HYPHEN_TOKENS.forEach(({ placeholder, canonical }) => {
+    const placeholderRegex = new RegExp(placeholder, "g");
+    output = output.replace(placeholderRegex, canonical);
+  });
+  return output;
+}
+
+const TRANSMISSION_TOKENS = new Set(
+  Object.keys(MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization)
+);
+
+function parseMapfreVersionSegments(versionOriginal = "") {
+  const info = {
+    trimSegment: "",
+    engineSegment: "",
+    displacementSegment: "",
+    horsepowerSegment: "",
+    doorsSegment: "",
+    transmissionSegment: "",
+    extras: [],
+    rawSegments: [],
+    normalizedSegments: [],
+    orderedSegments: [],
+  };
+
+  if (!versionOriginal || typeof versionOriginal !== "string") {
+    return info;
+  }
+
+  const segments = versionOriginal
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (segments.length === 0) {
+    return info;
+  }
+
+  info.rawSegments = segments.slice();
+
+  const transmissionTokens = Array.from(TRANSMISSION_TOKENS);
+
+  segments.forEach((segment, index) => {
+    const normalizedSegment = segment
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toUpperCase()
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!normalizedSegment) {
+      return;
+    }
+
+    info.normalizedSegments.push(normalizedSegment);
+
+    const looksLikeEngineConfig = /\b(?:L|V|I|R|H|B)\d{1,2}\b/.test(
+      normalizedSegment
+    );
+    if (!info.engineSegment && looksLikeEngineConfig) {
+      info.engineSegment = normalizedSegment;
+      return;
+    }
+
+    const looksLikeDisplacement = /\b\d+(?:\.\d+)?\s*(?:L|T)\b/.test(
+      normalizedSegment
+    );
+    if (!info.displacementSegment && looksLikeDisplacement) {
+      info.displacementSegment = normalizedSegment;
+      return;
+    }
+
+    const looksLikeHorsepower = /\b\d+\s*(?:CP|HP|C\.P\.|H\.P\.)\b/.test(
+      normalizedSegment
+    );
+    if (!info.horsepowerSegment && looksLikeHorsepower) {
+      info.horsepowerSegment = normalizedSegment;
+      return;
+    }
+
+    const looksLikeDoors = /\b\d+\s*PUERTAS?\b/.test(normalizedSegment);
+    if (!info.doorsSegment && looksLikeDoors) {
+      info.doorsSegment = normalizedSegment;
+      return;
+    }
+
+    if (!info.transmissionSegment) {
+      for (const token of transmissionTokens) {
+        if (normalizedSegment === token || normalizedSegment.includes(token)) {
+          info.transmissionSegment = normalizedSegment;
+          return;
+        }
+      }
+    }
+
+    if (!info.trimSegment && index === 0) {
+      info.trimSegment = normalizedSegment;
+      return;
+    }
+
+    info.extras.push(normalizedSegment);
+  });
+
+  if (!info.trimSegment && info.normalizedSegments.length) {
+    info.trimSegment = info.normalizedSegments[0];
+  }
+
+  info.orderedSegments = [
+    info.trimSegment,
+    info.engineSegment,
+    info.displacementSegment,
+    info.horsepowerSegment,
+    info.doorsSegment,
+    info.transmissionSegment,
+    ...info.extras,
+  ].filter(Boolean);
+
+  return info;
+}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -413,16 +399,23 @@ function normalizeEngineDisplacement(versionString = "") {
   if (!versionString || typeof versionString !== "string") return "";
   return versionString
     .replace(/\b(\d)(\d)L\b/g, "$1.$2L")
-    .replace(/\b(?<!\d\.)\d+L\b/g, (m) => `${m.slice(0, -1)}.0L`)
-    .replace(/\b(?<!\d\.)\d+\s+L\b/g, (m) => `${m.match(/\d+/)[0]}.0L`);
+    .replace(/\b(?<!\d\.)\d+L\b/g, (match) => `${match.slice(0, -1)}.0L`)
+    .replace(/\b(?<!\d\.)\d+\s+L\b/g, (match) => {
+      const digits = match.match(/\d+/)[0];
+      return `${digits}.0L`;
+    });
 }
 
 function normalizeStandaloneLiters(versionString = "") {
   if (!versionString || typeof versionString !== "string") return "";
-  return versionString.replace(/\b(\d+\.\d+)(?!L\b)(?!\d)/g, (m) => {
-    const liters = parseFloat(m);
-    return Number.isFinite(liters) && liters > 0 && liters <= 12 ? `${m}L` : m;
-  });
+  return versionString.replace(
+    /\b(\d+\.\d+)(?!L\b)(?!\d)(?![A-Z])/g,
+    (match) => {
+      const liters = parseFloat(match);
+      if (!Number.isFinite(liters) || liters <= 0 || liters > 10) return match;
+      return `${match}L`;
+    }
+  );
 }
 
 function normalizeHorsepower(versionString = "") {
@@ -443,11 +436,18 @@ function normalizeTurboTokens(versionString = "") {
     .replace(/\bT\/T\b/g, "TWIN TURBO");
 }
 
+function normalizeTurboSuffix(versionString = "") {
+  if (!versionString || typeof versionString !== "string") return "";
+  return versionString
+    .replace(/\b(\d+\.\d+)T\b/g, "$1L TURBO")
+    .replace(/\b(\d+\.\d+)\s*T\b/g, "$1L TURBO");
+}
+
 function normalizeTonCapacity(versionString = "") {
   if (!versionString || typeof versionString !== "string") return "";
   return versionString.replace(
     /\b(\d+(?:\.\d+)?)\s*TON\b/g,
-    (_, v) => `${v}TON`
+    (_, value) => `${value}TON`
   );
 }
 
@@ -455,19 +455,19 @@ function stripLeadingPhrases(text, phrases = []) {
   let cleaned = text.trim();
   phrases.forEach((phrase) => {
     if (!phrase) return;
-    const norm = phrase
+    const normalized = phrase
       .toString()
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
       .toUpperCase()
       .replace(/\s+/g, " ")
       .trim();
-    if (!norm) return;
-    const variants = [norm, norm.replace(/\s+/g, "")];
+    if (!normalized) return;
+    const variations = [normalized, normalized.replace(/\s+/g, "")];
     let changed = true;
     while (changed && cleaned) {
       changed = false;
-      for (const variant of variants) {
+      for (const variant of variations) {
         if (!variant) continue;
         if (cleaned === variant) {
           cleaned = "";
@@ -504,66 +504,42 @@ function normalizeText(value) {
     : "";
 }
 
-function cleanModelString(rawModel = "", brand = "") {
-  if (!rawModel || typeof rawModel !== "string") return "";
-  let cleaned = rawModel
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase();
-  cleaned = stripLeadingPhrases(cleaned, [brand]);
-  Object.entries(PROTECTED_HYPHEN_TOKENS).forEach(([token, placeholder]) => {
-    cleaned = cleaned.replace(
-      new RegExp(`\\b${escapeRegExp(token)}\\b`, "g"),
-      placeholder
-    );
-  });
-  cleaned = cleaned.replace(/[,/]/g, " ").replace(/\s+/g, " ").trim();
-  return cleaned;
-}
-
 function cleanVersionString(versionString, marca = "", modelo = "") {
   if (!versionString || typeof versionString !== "string") return "";
+
   let cleaned = versionString
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
     .replace(/"/g, " ")
     .trim();
+  cleaned = applyProtectedTokens(cleaned);
+
   cleaned = cleaned.replace(
     MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
     "$1.$2"
   );
   cleaned = stripLeadingPhrases(cleaned, [marca, modelo]);
 
-  Object.entries(PROTECTED_HYPHEN_TOKENS).forEach(([token, placeholder]) => {
-    cleaned = cleaned.replace(
-      new RegExp(`\\b${escapeRegExp(token)}\\b`, "g"),
-      placeholder
-    );
-  });
-
-  cleaned = cleaned
-    .replace(/[,/]/g, " ")
-    .replace(/-/g, " ")
-    .replace(/(\d)([A-Z])/g, "$1 $2")
-    .replace(/([A-Z])(\d)/g, "$1 $2")
-    .replace(
-      /\b([A-Z0-9]+)(AUT|MAN|STD|CVT|DSG|DCT|IVT|TA|TM|TIPTRONIC)\b/g,
-      "$1 $2"
-    )
-    .replace(/\bHB\b/g, "HATCHBACK")
-    .replace(/\b(V|L|R|H|I|B)\s+(\d{1,2})\b/g, "$1$2")
-    .replace(/\b(\d{1,2})\s+CIL\b/g, "$1CIL")
-    .replace(/\b(\d+(?:\.\d+)?)\s+L\b/g, "$1L");
+  cleaned = cleaned.replace(/[,/]/g, " ");
+  cleaned = cleaned.replace(/-/g, " ");
+  cleaned = cleaned.replace(/(\d)([A-Z])/g, "$1 $2");
+  cleaned = cleaned.replace(/([A-Z])(\d)/g, "$1 $2");
+  cleaned = cleaned.replace(
+    /\b([A-Z0-9]+)(AUT|MAN|STD|CVT|DSG|DCT|IVT|TIPTRONIC)\b/g,
+    "$1 $2"
+  );
+  cleaned = cleaned.replace(/\bHB\b/g, "HATCHBACK");
+  cleaned = cleaned.replace(/\b(V|L|R|H|I|B)\s+(\d{1,2})\b/g, "$1$2");
+  cleaned = cleaned.replace(/\b(\d{1,2})\s+CIL\b/g, "$1CIL");
+  cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s+L\b/g, "$1L");
 
   cleaned = normalizeTonCapacity(cleaned);
   cleaned = normalizeDrivetrain(cleaned);
   cleaned = normalizeCylinders(cleaned);
-  cleaned = cleaned
-    .replace(/\bV(\d+)\b/g, "$1CIL")
-    .replace(/\b(\d+)\s*V\b/g, "$1CIL");
   cleaned = normalizeEngineDisplacement(cleaned);
   cleaned = normalizeStandaloneLiters(cleaned);
+  cleaned = normalizeTurboSuffix(cleaned);
   cleaned = normalizeHorsepower(cleaned);
   cleaned = normalizeTurboTokens(cleaned);
 
@@ -571,6 +547,7 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
     const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
     cleaned = cleaned.replace(regex, " ");
   });
+
   MAPFRE_NORMALIZATION_DICTIONARY.transmission_tokens_to_strip.forEach(
     (token) => {
       const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
@@ -578,54 +555,98 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
     }
   );
 
-  cleaned = cleaned
-    .replace(/\s*\/\s*/g, " ")
-    .replace(
-      MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.stray_punctuation,
-      " "
-    )
+  cleaned = cleaned.replace(/\s*\/\s*/g, " ");
+  cleaned = cleaned.replace(
+    MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.stray_punctuation,
+    " "
+  );
+  cleaned = cleaned.replace(
+    MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
+    " "
+  );
+  cleaned = cleaned.replace(
+    MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces,
+    ""
+  );
+  cleaned = restoreProtectedTokens(cleaned);
+
+  return cleaned;
+}
+
+// --- NUEVO: limpieza específica de la columna MODELO ---
+function cleanModeloString(modelo = "", marca = "", versionOriginal = "") {
+  let base = normalizeText(modelo);
+  const marcaNorm = normalizeBrand(marca);
+
+  base = applyProtectedTokens(base);
+  base = base.replace(/[,/]/g, " ").replace(/\s+/g, " ").trim();
+
+  // 1) quitar la marca al inicio
+  base = stripLeadingPhrases(base, [marcaNorm]);
+
+  // 2) quitar la versión al final (tal como viene en la fuente)
+  let ver = normalizeText(versionOriginal);
+  ver = applyProtectedTokens(ver)
+    .replace(/[,/]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (ver) {
+    if (base.endsWith(ver)) {
+      base = base.slice(0, base.length - ver.length).trim();
+    } else {
+      // intento token a token desde el final
+      const vTokens = ver.split(" ").filter(Boolean);
+      let bTokens = base.split(" ").filter(Boolean);
+      if (vTokens.length && bTokens.length) {
+        const vJoined = vTokens.join(" ");
+        const bJoined = bTokens.join(" ");
+        if (bJoined.endsWith(vJoined)) {
+          bTokens = bTokens.slice(0, bTokens.length - vTokens.length);
+        }
+      }
+      base = bTokens.join(" ").trim();
+    }
+  }
+
+  base = restoreProtectedTokens(base);
+  base = base
     .replace(
       MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
       " "
     )
     .replace(MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces, "");
-
-  Object.values(PROTECTED_HYPHEN_TOKENS).forEach((placeholder) => {
-    cleaned = cleaned.replace(
-      new RegExp(`\\b${escapeRegExp(placeholder)}\\b`, "g"),
-      Object.keys(PROTECTED_HYPHEN_TOKENS).find(
-        (k) => PROTECTED_HYPHEN_TOKENS[k] === placeholder
-      )
-    );
-  });
-
-  return cleaned;
+  return base;
 }
+// --- FIN NUEVO ---
 
 function extractDoorsAndOccupants(versionOriginal = "") {
-  if (!versionOriginal || typeof versionOriginal !== "string")
+  if (!versionOriginal || typeof versionOriginal !== "string") {
     return { doors: "", occupants: "" };
+  }
   const normalized = versionOriginal
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
     .replace(/[,/]/g, " ");
+
   const doorsMatch = normalized.match(
     /\b(\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/
   );
-  const occMatch = normalized.match(/\b0?(\d{1,2})\s*(?:OCUP|PASAJEROS?)\b/);
-  return {
-    doors: doorsMatch ? `${doorsMatch[1]}PUERTAS` : "",
-    occupants:
-      occMatch && !Number.isNaN(parseInt(occMatch[1], 10))
-        ? `${parseInt(occMatch[1], 10)}OCUP`
-        : "",
-  };
+  const occMatch = normalized.match(/\b0?(\d{1,2})\s*OCUP\b/);
+
+  const doors = doorsMatch ? `${doorsMatch[1]}PUERTAS` : "";
+  const occupants =
+    occMatch && !Number.isNaN(parseInt(occMatch[1], 10))
+      ? `${parseInt(occMatch[1], 10)}OCUP`
+      : "";
+
+  return { doors, occupants };
 }
 
-function normalizeTransmission(code) {
-  if (!code || typeof code !== "string") return "";
-  const normalized = code
+function normalizeTransmission(transmissionCode) {
+  if (!transmissionCode || typeof transmissionCode !== "string") return "";
+  const normalized = transmissionCode
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
@@ -636,9 +657,9 @@ function normalizeTransmission(code) {
   );
 }
 
-function inferTransmissionFromText(versionString = "") {
-  if (!versionString || typeof versionString !== "string") return "";
-  const normalized = versionString
+function inferTransmissionFromVersion(versionOriginal = "") {
+  if (!versionOriginal || typeof versionOriginal !== "string") return "";
+  const normalized = versionOriginal
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
@@ -650,48 +671,7 @@ function inferTransmissionFromText(versionString = "") {
       return MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization[token];
     }
   }
-  if (/\bT\s*A\b/.test(normalized) || /TA\b/.test(normalized)) return "AUTO";
-  if (/\bT\s*M\b/.test(normalized) || /TM\b/.test(normalized)) return "MANUAL";
   return "";
-}
-
-function tokenShouldBreak(tokenSanitized) {
-  if (!tokenSanitized) return false;
-  if (MODEL_BREAK_TOKENS.has(tokenSanitized)) return true;
-  if (/^\d+(?:\.\d+)?(?:L|T|HP|KW)?$/.test(tokenSanitized)) return true;
-  if (/^\d+CIL$/.test(tokenSanitized)) return true;
-  if (/^\d+V$/.test(tokenSanitized)) return true;
-  if (/^\d+PAS$/.test(tokenSanitized)) return true;
-  if (/^\d+OCUP$/.test(tokenSanitized)) return true;
-  if (/^\d+P$/.test(tokenSanitized)) return true;
-  if (/^\d+$/.test(tokenSanitized)) return true;
-  if (/^\d{1,2}[A-Z]+$/.test(tokenSanitized)) return true;
-  if (
-    /^[A-Z]{1,2}\d{2,}$/.test(tokenSanitized) &&
-    !/^CX\d{1,2}$/.test(tokenSanitized)
-  )
-    return true;
-  return false;
-}
-
-function extractModel(rawModel = "", brand = "") {
-  const cleaned = cleanModelString(rawModel, brand);
-  if (!cleaned) return "";
-  const tokens = cleaned.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) return "";
-  const modelTokens = [];
-  for (const token of tokens) {
-    const normalizedToken = token.replace(/[^A-Z0-9-]/g, "");
-    const sanitized = normalizedToken.replace(/[^A-Z0-9]/g, "");
-    if (!sanitized) continue;
-    if (modelTokens.length > 0 && tokenShouldBreak(sanitized)) break;
-    if (modelTokens.length === 0 && tokenShouldBreak(sanitized)) continue;
-    modelTokens.push(normalizedToken);
-  }
-  if (modelTokens.length === 0) {
-    return tokens[0].replace(/[^A-Z0-9-]/g, "");
-  }
-  return modelTokens.join(" ");
 }
 
 function dedupeTokens(value = "") {
@@ -714,20 +694,28 @@ function dedupeTokens(value = "") {
 function validateRecord(record) {
   const errors = [];
   const year = Number(record.anio);
-  if (!record.marca || record.marca.toString().trim() === "")
+
+  if (!record.marca || record.marca.toString().trim() === "") {
     errors.push("marca is required");
-  if (!record.modelo || record.modelo.toString().trim() === "")
+  }
+  if (!record.modelo || record.modelo.toString().trim() === "") {
     errors.push("modelo is required");
-  if (!Number.isInteger(year) || year < 2000 || year > 2030)
+  }
+  if (!Number.isInteger(year) || year < 2000 || year > 2030) {
     errors.push("anio must be between 2000-2030");
-  else record.anio = year;
+  } else {
+    record.anio = year;
+  }
   if (
     !record.version_original ||
     record.version_original.toString().trim() === ""
-  )
+  ) {
     errors.push("version is required");
-  if (!record.transmision || record.transmision.toString().trim() === "")
+  }
+  if (!record.transmision || record.transmision.toString().trim() === "") {
     errors.push("transmision is required");
+  }
+
   return { isValid: errors.length === 0, errors };
 }
 
@@ -748,62 +736,69 @@ function createCommercialHash(vehicle) {
     .join("|")
     .toLowerCase()
     .trim();
+
   return crypto.createHash("sha256").update(key).digest("hex");
 }
 
 function processMapfreRecord(record) {
-  const marcaNormalizada = normalizeBrand(record.marca || "");
-  const modeloNormalizado = extractModel(
-    record.modelo_version_completo || "",
-    marcaNormalizada
+  const parsedSegments = parseMapfreVersionSegments(
+    record.version_original || ""
   );
-  const modeloFinal =
-    modeloNormalizado || normalizeText(record.modelo_version_completo || "");
 
-  const inferredTransmission =
+  const transmissionFromSegment =
+    normalizeTransmission(parsedSegments.transmissionSegment || "") ||
+    inferTransmissionFromVersion(parsedSegments.transmissionSegment || "");
+
+  const derivedTransmission =
     normalizeTransmission(record.transmision) ||
-    inferTransmissionFromText(record.version_corta || "") ||
-    inferTransmissionFromText(record.modelo_version_completo || "");
-  record.transmision = inferredTransmission;
+    transmissionFromSegment ||
+    inferTransmissionFromVersion(record.version_original);
 
-  const versionOriginal =
-    record.version_corta && record.version_corta.trim()
-      ? record.version_corta
-      : record.modelo_version_completo;
+  record.transmision = derivedTransmission;
 
-  const { doors, occupants } = extractDoorsAndOccupants(versionOriginal || "");
+  const marcaNormalizada = normalizeBrand(record.marca || "");
+  const modeloNormalizado = cleanModeloString(
+    record.modelo || "",
+    marcaNormalizada,
+    record.version_original || ""
+  );
+
+  const segmentDoorData = extractDoorsAndOccupants(
+    parsedSegments.doorsSegment || ""
+  );
+  const fullDoorData = extractDoorsAndOccupants(record.version_original || "");
+  const doors = segmentDoorData.doors || fullDoorData.doors;
+  const occupants = segmentDoorData.occupants || fullDoorData.occupants;
 
   const validation = validateRecord({
     ...record,
     marca: marcaNormalizada,
-    modelo: modeloFinal,
-    version_original: versionOriginal,
+    modelo: modeloNormalizado,
   });
   if (!validation.isValid) {
     throw new Error(`Validation failed: ${validation.errors.join(", ")}`);
   }
 
+  const sourceForCleaning =
+    parsedSegments.orderedSegments.length > 0
+      ? parsedSegments.orderedSegments.join(", ")
+      : record.version_original || "";
+
   let versionLimpia = cleanVersionString(
-    versionOriginal || "",
+    sourceForCleaning,
     marcaNormalizada,
-    modeloFinal
+    modeloNormalizado
   );
+
   versionLimpia = versionLimpia
     .replace(/\b\d\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/gi, " ")
-    .replace(/\b0?\d+\s*(?:OCUP|PASAJEROS?)\b/gi, " ")
+    .replace(/\b0?\d+\s*OCUP\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
   versionLimpia = dedupeTokens(
     [versionLimpia, doors, occupants].filter(Boolean).join(" ").trim()
   );
-
-  Object.entries(PROTECTED_HYPHEN_TOKENS).forEach(([token, placeholder]) => {
-    versionLimpia = versionLimpia.replace(
-      new RegExp(`\\b${escapeRegExp(placeholder)}\\b`, "g"),
-      token
-    );
-  });
 
   if (!versionLimpia) {
     throw new Error("Normalization produced empty version_limpia");
@@ -813,10 +808,10 @@ function processMapfreRecord(record) {
     origen_aseguradora: "MAPFRE",
     id_original: record.id_original,
     marca: marcaNormalizada,
-    modelo: modeloFinal,
+    modelo: modeloNormalizado,
     anio: record.anio,
     transmision: record.transmision,
-    version_original: versionOriginal,
+    version_original: record.version_original,
     version_limpia: versionLimpia,
     fecha_procesamiento: new Date().toISOString(),
   };
@@ -828,11 +823,13 @@ function processMapfreRecord(record) {
 function normalizeMapfreData(records = []) {
   const results = [];
   const errors = [];
+
   for (let i = 0; i < records.length; i += BATCH_SIZE) {
     const batch = records.slice(i, i + BATCH_SIZE);
     for (const record of batch) {
       try {
-        results.push(processMapfreRecord(record));
+        const processed = processMapfreRecord(record);
+        results.push(processed);
       } catch (error) {
         errors.push({
           error: true,
@@ -845,6 +842,7 @@ function normalizeMapfreData(records = []) {
       }
     }
   }
+
   return { results, errors };
 }
 
