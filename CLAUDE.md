@@ -149,6 +149,28 @@ No automated testing framework - workflows are tested by:
 
 Access Supabase via dashboard or direct PostgreSQL connection using credentials in `.env`
 
+**Key Commands:**
+```sql
+-- Apply homologation functions
+\i src/supabase/funciones-homologacion.sql
+
+-- Test batch processing
+SELECT procesar_batch_vehiculos('[{"hash_comercial":"...","version_limpia":"..."}]'::jsonb);
+
+-- Check processing results
+SELECT origen_aseguradora, COUNT(*) FROM catalogo_homologado GROUP BY origen_aseguradora;
+```
+
+### JavaScript Development
+
+**n8n Code Node Testing:**
+```javascript
+// Test normalization locally (example for Qualitas)
+const testRecord = { marca: "TOYOTA", modelo: "CAMRY", anio: 2023, version_original: "XLE AUT 2.5L" };
+const normalized = processQualitasRecord(testRecord);
+console.log(normalized);
+```
+
 ### Data Validation
 
 Use MCP agents for data profiling:
@@ -159,6 +181,14 @@ SELECT COUNT(*) total,
        COUNT(DISTINCT marca) d_marcas,
        COUNT(DISTINCT modelo) d_modelos
 FROM [insurer_table];
+
+-- Token overlap analysis
+SELECT hash_comercial,
+       array_length(version_tokens_array, 1) as token_count,
+       version_tokens_array
+FROM catalogo_homologado
+WHERE marca = 'TOYOTA' AND modelo = 'CAMRY'
+ORDER BY token_count DESC;
 ```
 
 ## Key Principles
@@ -204,3 +234,33 @@ FROM [insurer_table];
 - Always preserve original data for audit and debugging purposes
 - The system handles missing/null values gracefully - avoid using default placeholders
 - Security features (ABS, BA) and occupant info (5OCUP) should be excluded from version normalization
+
+## Implementation Patterns
+
+### Normalization Code Structure
+
+Each insurer's normalization follows a consistent pattern:
+
+1. **Dictionary-based cleaning**: Remove irrelevant tokens (comfort features, audio systems)
+2. **Protected token handling**: Preserve hyphenated trims (A-SPEC, TYPE-S, S-LINE) during processing
+3. **Engine specification normalization**: Standardize displacement (1.8L, 2.0L TURBO), power (150HP)
+4. **Transmission mapping**: Convert codes to MANUAL/AUTO or infer from version text
+5. **Hash generation**: SHA-256 of `marca|modelo|anio|transmision` for grouping
+6. **Batch processing**: Process in chunks of 5,000 records to manage memory
+
+### Supabase RPC Function Architecture
+
+The `procesar_batch_vehiculos` function implements sophisticated matching:
+
+1. **Multi-score calculation**: Combines Jaccard similarity, token overlap, trigram matching, and Levenshtein distance
+2. **Threshold-based decisions**: Different thresholds for same-insurer (0.95) vs cross-insurer (0.35) matches
+3. **JSONB availability tracking**: Stores per-insurer metadata including confidence scores and provenance
+4. **Conflict resolution**: Handles duplicate exact matches through historical arrays
+5. **Error isolation**: Failed records don't break batch processing
+
+### Data Quality Patterns
+
+- **Validation gates**: Records must pass structure validation before normalization
+- **Token count requirements**: Minimum token thresholds prevent weak matches
+- **Audit trails**: Original data preserved in `version_original` and `id_original` fields
+- **Performance indexing**: GIN indexes on `version_tokens_array` for fast token overlap queries
