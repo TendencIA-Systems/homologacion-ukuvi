@@ -187,11 +187,11 @@ BEGIN
     END IF;
 
     combined_score := (
-        jaccard_score     * 0.20 +
+        jaccard_score     * 0.50 +
         overlap_ratio     * 0.30 +
-        trigram_score     * 0.20 +
-        levenshtein_score * 0.20 +
-        metaphone_score   * 0.10
+        trigram_score     * 0.05 +
+        levenshtein_score * 0.10 +
+        metaphone_score   * 0.05
     ) + numeric_bonus;
 
     RETURN LEAST(ROUND(combined_score, 3), 1.0);
@@ -228,8 +228,8 @@ DECLARE
     best_score numeric;
     best_match_id bigint;
     best_match_has_insurer boolean;
-    threshold_same_insurer numeric := 0.85;
-    threshold_cross_insurer numeric := 0.50;
+    threshold_same_insurer numeric := 0.95;
+    threshold_cross_insurer numeric := 0.35;
     min_token_overlap_same int := 2;
     min_token_overlap_cross int := 2;
     min_tokens_required int := 1;

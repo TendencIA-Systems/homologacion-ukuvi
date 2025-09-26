@@ -172,6 +172,27 @@ const PROTECTED_HYPHEN_TOKENS = [
   },
 ];
 
+const NUMERIC_CONTEXT_TOKENS = new Set([
+  "OCUP",
+  "OCUPANTE",
+  "OCUPANTES",
+  "OCUPACION",
+  "PASAJEROS",
+  "PASAJERO",
+  "PAS",
+  "PUERTAS",
+  "PUERTA",
+  "PAX",
+]);
+
+const ENGINE_ALIAS_PATTERNS = [
+  { regex: /\bT[\s-]?FSI\b/gi, replacement: "TURBO" },
+  { regex: /\bT[\s-]?SI\b/gi, replacement: "TURBO" },
+  { regex: /\bFSI\s*TURBO\b/gi, replacement: "TURBO" },
+  { regex: /\bFSI\b/gi, replacement: "FSI" },
+  { regex: /\bGDI\b/gi, replacement: "GDI" },
+];
+
 function applyProtectedTokens(value = "") {
   let output = value;
   PROTECTED_HYPHEN_TOKENS.forEach(({ regex, placeholder }) => {
@@ -193,11 +214,24 @@ function normalizeStandaloneLiters(value = "") {
   if (!value || typeof value !== "string") return "";
   return value
     .replace(/\b(\d+\.\d+)\s+L\b/g, "$1L")
-    .replace(/\b(\d+\.\d+)(?=\s|$)/g, (match) => {
-      const liters = parseFloat(match);
-      if (!Number.isFinite(liters) || liters <= 0 || liters > 12) return match;
-      return `${match}L`;
-    });
+    .replace(
+      /\b(\d+\.\d+)(?=\s|$)(?!\s*(?:L\b|\d|TURBO\b|BITURBO\b|SUPERCHARGED\b|SUPERCARGADO\b))/g,
+      (match) => {
+        const liters = parseFloat(match);
+        if (!Number.isFinite(liters) || liters <= 0 || liters > 12)
+          return match;
+        return `${match}L`;
+      }
+    );
+}
+
+function applyEngineAliases(value = "") {
+  if (!value || typeof value !== "string") return "";
+  let output = value;
+  ENGINE_ALIAS_PATTERNS.forEach(({ regex, replacement }) => {
+    output = output.replace(regex, replacement);
+  });
+  return output;
 }
 
 function normalizeDrivetrain(value = "") {
@@ -232,6 +266,59 @@ function normalizeEngineDisplacement(value = "") {
     });
 }
 
+function formatTurboDisplacement(raw = "") {
+  const value = parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0 || value > 12) {
+    return "";
+  }
+  return Number.isInteger(value) ? `${value}.0` : value.toString();
+}
+
+function normalizeTurboTokens(value = "") {
+  if (!value || typeof value !== "string") return "";
+
+  const explicitLiters = [];
+  value.replace(/\b\d+(?:\.\d+)?L\b/gi, (match, offset) => {
+    explicitLiters.push({ token: match, offset });
+    return match;
+  });
+
+  const applyTurboReplacement = (fullMatch, rawNumber, hasL, offset) => {
+    const formatted = formatTurboDisplacement(rawNumber);
+    if (!formatted) return fullMatch;
+
+    const matchEnd = offset + fullMatch.length;
+    const hasOtherLiters = explicitLiters.some(
+      ({ token, offset: literOffset }) => {
+        const literEnd = literOffset + token.length;
+        return literOffset < offset || literOffset >= matchEnd;
+      }
+    );
+
+    if (hasL) {
+      return `${formatted}L TURBO`;
+    }
+
+    if (hasOtherLiters) {
+      return `${formatted} TURBO`;
+    }
+
+    return `${formatted}L TURBO`;
+  };
+
+  let output = value.replace(
+    /\b(\d+(?:\.\d+)?)(L)?[\s-]*T\b/gi,
+    applyTurboReplacement
+  );
+  output = output.replace(
+    /(\d+(?:\.\d+)?)(L)?(?:\s|-)?(TFSI|TSI)\b/gi,
+    (fullMatch, rawNumber, hasL, _alias, offset) =>
+      applyTurboReplacement(fullMatch, rawNumber, hasL, offset)
+  );
+
+  return output;
+}
+
 function normalizeCylinders(value = "") {
   if (!value || typeof value !== "string") return "";
   let normalized = value;
@@ -256,6 +343,8 @@ function cleanVersionString(versionString, model = "") {
   cleaned = cleaned.replace(/-/g, " ");
 
   cleaned = normalizeDrivetrain(cleaned);
+  cleaned = normalizeTurboTokens(cleaned);
+  cleaned = applyEngineAliases(cleaned);
   cleaned = normalizeCylinders(cleaned);
 
   QUALITAS_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.forEach(
@@ -400,14 +489,22 @@ function processQualitasRecord(record) {
     .replace(/\s+/g, " ")
     .trim();
 
-  const tokens = versionLimpia.split(" ").filter((token, idx, arr) => {
-    if (!token) return false;
-    if (/^[.,]$/.test(token)) return false;
+  const rawTokens = versionLimpia.split(" ").filter(Boolean);
+  const tokens = [];
+  rawTokens.forEach((token, idx, arr) => {
+    if (/^[.,]$/.test(token)) return;
     if (/^\d+$/.test(token)) {
-      const next = arr[idx + 1] || "";
-      if (/^\d+OCUP$/i.test(next) || /^OCUP$/i.test(next)) return false;
+      const next = (arr[idx + 1] || "").toUpperCase();
+      const prev = (arr[idx - 1] || "").toUpperCase();
+      if (
+        /^\d+OCUP$/i.test(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(prev)
+      ) {
+        return;
+      }
     }
-    return true;
+    tokens.push(token);
   });
   versionLimpia = tokens.join(" ");
   versionLimpia = versionLimpia.replace(/\s+/g, " ").trim();

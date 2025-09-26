@@ -1,4 +1,4 @@
-﻿/**
+/**
  * MAPFRE ETL - Normalization Code Node
  *
  * Mirrors the Zurich/Qualitas/Atlas pattern while handling MAPFRE's comma-separated specs:
@@ -93,6 +93,7 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "AUTO",
     "AT",
     "AT.",
+    "TA",
     "AUTOMATICO",
     "AUTOMATICA",
     "AUTOMATIC",
@@ -150,6 +151,11 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     R6: "6CIL",
     B4: "4CIL",
     B6: "6CIL",
+    "3V": "3CIL",
+    "4V": "4CIL",
+    "5V": "5CIL",
+    "6V": "6CIL",
+    "8V": "8CIL",
   },
   transmission_normalization: {
     STD: "MANUAL",
@@ -201,6 +207,10 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     stray_punctuation: /(?<!\d)[\.,;]|[\.,;](?!\d)/g,
   },
 };
+const SPECIAL_TRIM_NORMALIZATIONS = [
+  { regex: /\bA[\s-]?SPECH\b/gi, replacement: "A-SPEC" },
+];
+
 const PROTECTED_HYPHEN_TOKENS = [
   {
     regex: /\bA[\s-]?SPEC\b/gi,
@@ -386,10 +396,16 @@ function normalizeDrivetrain(versionString = "") {
 function normalizeCylinders(versionString = "") {
   if (!versionString || typeof versionString !== "string") return "";
   let normalized = versionString;
+  normalized = normalized
+    .replace(/\b(3|4|5|6|8)\s*V\b/g, "$1CIL")
+    .replace(/\b(3|4|5|6|8)V\b/g, "$1CIL")
+    .replace(/\b(\d{1,2})\s*CIL(?:INDROS)?\b/g, "$1CIL")
+    .replace(/\b(\d{1,2})\s*CYL\b/g, "$1CIL");
+
   Object.entries(
     MAPFRE_NORMALIZATION_DICTIONARY.cylinder_normalization
   ).forEach(([from, to]) => {
-    const regex = new RegExp(`\\b${escapeRegExp(from)}\\b`, "g");
+    const regex = new RegExp(`\b${escapeRegExp(from)}\b`, "gi");
     normalized = normalized.replace(regex, to);
   });
   return normalized;
@@ -513,6 +529,12 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
     .toUpperCase()
     .replace(/"/g, " ")
     .trim();
+
+  SPECIAL_TRIM_NORMALIZATIONS.forEach(({ regex, replacement }) => {
+    cleaned = cleaned.replace(regex, replacement);
+  });
+
+  cleaned = applyProtectedTokens(cleaned);
   cleaned = applyProtectedTokens(cleaned);
 
   cleaned = cleaned.replace(
@@ -573,7 +595,7 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
   return cleaned;
 }
 
-// --- NUEVO: limpieza específica de la columna MODELO ---
+// --- NUEVO: limpieza espec�fica de la columna MODELO ---
 function cleanModeloString(modelo = "", marca = "", versionOriginal = "") {
   let base = normalizeText(modelo);
   const marcaNorm = normalizeBrand(marca);
@@ -584,7 +606,7 @@ function cleanModeloString(modelo = "", marca = "", versionOriginal = "") {
   // 1) quitar la marca al inicio
   base = stripLeadingPhrases(base, [marcaNorm]);
 
-  // 2) quitar la versión al final (tal como viene en la fuente)
+  // 2) quitar la versi�n al final (tal como viene en la fuente)
   let ver = normalizeText(versionOriginal);
   ver = applyProtectedTokens(ver)
     .replace(/[,/]/g, " ")

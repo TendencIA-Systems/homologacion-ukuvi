@@ -1,32 +1,106 @@
-// src/insurers/gnp/gnp-codigo-de-normalizacion.js
 /**
- * GNP ETL – Normalization Code Node
+ * GNP ETL - Normalization Code Node
  *
- * Mirrors the Zurich/BX/El Potosí pattern while covering GNP-specific quirks:
- * - Brand/model contamination inside the version string
- * - “S/D” placeholders and 1–2 character pseudo trims
- * - Transmission tokens glued to adjacent specs (e.g. “QUATTROAUT”)
- * - Brand alias consolidation (GENERAL MOTORS → GMC, JAC SEI → JAC, MG ROVER → MG)
- * - Standalone decimals (1.4, 2.0) become 1.4L / 2.0L
- * - Door codes like “3P” become “3PUERTAS”
- *
- * Use inside an n8n Code node. Emits a flat array of `{ json }`; validation issues
- * appear with `{ error: true }` so downstream nodes can log or branch.
+ * Aligns GNP vehicle records with the shared homologation normalization contract.
+ * - Canonicalizes AUTO/MANUAL transmissions (numeric & textual) and strips aliases from trims.
+ * - Cleans drivetrain/engine specs, comfort tokens (COMFORT/CONFORT, etc.), ton capacity and turbo suffixes.
+ * - Preserves meaningful trim tokens while removing door/occupant noise via numeric-context guards.
  */
 const crypto = require("crypto");
 
 const BATCH_SIZE = 5000;
 
-const GNP_NORMALIZATION_DICTIONARY = {
-  brand_aliases: {
-    "GENERAL MOTORS": "GMC",
-    "GENERAL MOTORS 2": "GMC",
-    "GENERAL MOTORS COMPANY": "GMC",
-    "GENERAL MOTORS CORPORATION": "GMC",
-    GMC: "GMC",
-    "JAC SEI": "JAC",
-    "MG ROVER": "MG",
+const CANONICAL_TRANSMISSIONS = new Set(["AUTO", "MANUAL"]);
+
+const TRANSMISSION_DEFINITIONS = [
+  {
+    canonical: "MANUAL",
+    tokens: [
+      "MANUAL",
+      "MAN",
+      "MAN.",
+      "STD",
+      "STD.",
+      "TM",
+      "ESTANDAR",
+      "MECANICO",
+      "MECANICA",
+      "MECA",
+      "MECHANICO",
+      "SECUENCIAL",
+      "DRIVELOGIC",
+      "DUALOGIC",
+      "SMG",
+      "SEMI AUTOMATICO",
+      "SEMI AUTOMATICA",
+    ],
   },
+  {
+    canonical: "AUTO",
+    tokens: [
+      "AUTO",
+      "AUT",
+      "AUT.",
+      "AT",
+      "AT.",
+      "AUTOMATICO",
+      "AUTOMATICA",
+      "AUTOMATIC",
+      "AUTOMATIZADO",
+      "AUTOMATIZADA",
+      "AUTOTRANS",
+      "AUTOM",
+      "CVT",
+      "E CVT",
+      "E-CVT",
+      "ECVT",
+      "IVT",
+      "I CVT",
+      "DSG",
+      "DCT",
+      "TIPTRONIC",
+      "TIPTRNIC",
+      "STEPTRONIC",
+      "GEARTRONIC",
+      "MULTITRONIC",
+      "S TRONIC",
+      "S-TRONIC",
+      "STRONIC",
+      "S.TRONIC",
+      "Q TRONIC",
+      "Q-TRONIC",
+      "TOUCHTRONIC",
+      "TOUCHTRONIC3",
+      "POWERSHIFT",
+      "PDK",
+      "SPORTSHIFT",
+      "SELESPEED",
+      "SALESPEED",
+      "SPEEDSHIFT",
+      "TORQUEFLITE",
+      "DUAL CLUTCH",
+      "DUAL-CLUTCH",
+      "HYDROMATIC",
+      "XTRONIC",
+      "X-TRONIC",
+      "X TRONIC",
+      "MULTIDRIVE",
+      "AUTOMATIZADO",
+    ],
+  },
+];
+
+const BRAND_ALIASES = {
+  "GENERAL MOTORS": "GMC",
+  "GENERAL MOTORS 2": "GMC",
+  "GENERAL MOTORS COMPANY": "GMC",
+  "GENERAL MOTORS CORPORATION": "GMC",
+  GMC: "GMC",
+  "JAC SEI": "JAC",
+  "MG ROVER": "MG",
+};
+
+const GNP_NORMALIZATION_DICTIONARY = {
   irrelevant_comfort_audio: [
     "ABS",
     "CA",
@@ -88,46 +162,8 @@ const GNP_NORMALIZATION_DICTIONARY = {
     "V.E.",
     "C/A",
     "S/D",
-  ],
-  transmission_tokens_to_strip: [
-    "AUT",
-    "AUT.",
-    "AUTO",
-    "AT",
-    "AT.",
-    "AUTOMATICO",
-    "AUTOMATICA",
-    "AUTOMATIC",
-    "AUTOMATIZADO",
-    "AUTOMATIZADA",
-    "TIPTRONIC",
-    "STEPTRONIC",
-    "GEARTRONIC",
-    "MULTITRONIC",
-    "SPORTSHIFT",
-    "S-TRONIC",
-    "S TRONIC",
-    "STRONIC",
-    "Q-TRONIC",
-    "Q TRONIC",
-    "CVT",
-    "DSG",
-    "DCT",
-    "IVT",
-    "SECUENCIAL",
-    "SECUENCIAL.",
-    "SELESPEED",
-    "POWERSHIFT",
-    "TORQUEFLITE",
-    "MANUAL",
-    "MAN",
-    "MAN.",
-    "STD",
-    "STD.",
-    "MECANICO",
-    "MECANICA",
-    "MECA",
-    "MECHANICO",
+    "COMFORT",
+    "CONFORT",
   ],
   cylinder_normalization: {
     L3: "3CIL",
@@ -152,49 +188,6 @@ const GNP_NORMALIZATION_DICTIONARY = {
     R6: "6CIL",
     B4: "4CIL",
     B6: "6CIL",
-  },
-  transmission_normalization: {
-    STD: "MANUAL",
-    "STD.": "MANUAL",
-    MANUAL: "MANUAL",
-    MAN: "MANUAL",
-    "MAN.": "MANUAL",
-    MECA: "MANUAL",
-    MECANICO: "MANUAL",
-    MECANICA: "MANUAL",
-    MECHANICO: "MANUAL",
-    SECUENCIAL: "MANUAL",
-    "SECUENCIAL.": "MANUAL",
-    DRIVELOGIC: "MANUAL",
-    DUALOGIC: "MANUAL",
-    AUT: "AUTO",
-    "AUT.": "AUTO",
-    AUTO: "AUTO",
-    AT: "AUTO",
-    "AT.": "AUTO",
-    AUTOMATICO: "AUTO",
-    AUTOMATICA: "AUTO",
-    AUTOMATIC: "AUTO",
-    AUTOMATIZADO: "AUTO",
-    AUTOMATIZADA: "AUTO",
-    CVT: "AUTO",
-    DSG: "AUTO",
-    "S TRONIC": "AUTO",
-    "S-TRONIC": "AUTO",
-    STRONIC: "AUTO",
-    TIPTRONIC: "AUTO",
-    STEPTRONIC: "AUTO",
-    SELESPEED: "AUTO",
-    "Q-TRONIC": "AUTO",
-    "Q TRONIC": "AUTO",
-    DCT: "AUTO",
-    MULTITRONIC: "AUTO",
-    GEARTRONIC: "AUTO",
-    SPEEDSHIFT: "AUTO",
-    SPORTSHIFT: "AUTO",
-    POWERSHIFT: "AUTO",
-    TORQUEFLITE: "AUTO",
-    IVT: "AUTO",
   },
   regex_patterns: {
     decimal_comma: /(\d),(\d)/g,
@@ -232,6 +225,127 @@ const PROTECTED_HYPHEN_TOKENS = [
   },
 ];
 
+const NUMERIC_CONTEXT_TOKENS = new Set([
+  "OCUP",
+  "OCUPANTE",
+  "OCUPANTES",
+  "OCUPACION",
+  "PASAJEROS",
+  "PASAJERO",
+  "PAS",
+  "PUERTAS",
+  "PUERTA",
+  "PAX",
+]);
+
+const RESIDUAL_SINGLE_TOKENS = new Set(["A", "B", "C", "E", "Q"]);
+
+const ENGINE_ALIAS_PATTERNS = [
+  { regex: /\bT[\s-]?FSI\b/gi, replacement: "TURBO" },
+  { regex: /\bT[\s-]?SI\b/gi, replacement: "TURBO" },
+  { regex: /\bFSI\s*TURBO\b/gi, replacement: "TURBO" },
+  { regex: /\bECOBOOST\b/gi, replacement: "TURBO" },
+  { regex: /\bT[\s-]?JET\b/gi, replacement: "TURBO" },
+  { regex: /\bBI[\s-]?TURBO\b/gi, replacement: "BITURBO" },
+  { regex: /\bTURBO DIESEL\b/gi, replacement: "DIESEL_TURBO" },
+  { regex: /\bDIESEL TURBO\b/gi, replacement: "DIESEL_TURBO" },
+  { regex: /\bTDI\b/gi, replacement: "DIESEL_TURBO" },
+  { regex: /\bCDI\b/gi, replacement: "DIESEL_TURBO" },
+  { regex: /\bTDCI\b/gi, replacement: "DIESEL_TURBO" },
+  { regex: /\bHDI\b/gi, replacement: "DIESEL_TURBO" },
+  { regex: /\bBLUETEC\b/gi, replacement: "DIESEL_TURBO" },
+  { regex: /\bHEMI\b/gi, replacement: "HEMI" },
+];
+
+function escapeRegExp(value = "") {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function sanitizeTransmissionToken(value = "") {
+  return value
+    .toString()
+    .toUpperCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function generateTransmissionTokenVariants(token = "") {
+  const variants = new Set();
+  const upper = token.toString().toUpperCase();
+  variants.add(upper);
+  variants.add(upper.replace(/-/g, " "));
+  variants.add(upper.replace(/\./g, ""));
+  variants.add(upper.replace(/[.\-]/g, " "));
+  variants.add(upper.replace(/\s+/g, " ").trim());
+  variants.add(upper.replace(/\s+/g, ""));
+  const sanitized = sanitizeTransmissionToken(token);
+  if (sanitized) {
+    variants.add(sanitized);
+    variants.add(sanitized.replace(/\s+/g, ""));
+  }
+  return Array.from(variants)
+    .map((variant) => variant.trim())
+    .filter(Boolean);
+}
+
+const TRANSMISSION_TOKEN_MAP = new Map();
+const TRANSMISSION_SEARCH_PATTERNS = [];
+const TRANSMISSION_TOKEN_VARIANTS = new Set();
+
+TRANSMISSION_DEFINITIONS.forEach(({ canonical, tokens }) => {
+  const variantSet = new Set();
+  tokens.forEach((token) => {
+    const normalizedToken = sanitizeTransmissionToken(token);
+    if (normalizedToken && !TRANSMISSION_TOKEN_MAP.has(normalizedToken)) {
+      TRANSMISSION_TOKEN_MAP.set(normalizedToken, canonical);
+    }
+    generateTransmissionTokenVariants(token).forEach((variant) => {
+      variantSet.add(variant);
+      TRANSMISSION_TOKEN_VARIANTS.add(variant);
+    });
+  });
+  TRANSMISSION_SEARCH_PATTERNS.push({
+    canonical,
+    patterns: Array.from(variantSet)
+      .map((variant) => {
+        const trimmed = variant.trim();
+        if (!trimmed) return null;
+        const useWordBoundary = /^[A-Z0-9 ]+$/.test(trimmed);
+        const source = useWordBoundary
+          ? `\\b${escapeRegExp(trimmed)}\\b`
+          : escapeRegExp(trimmed);
+        return new RegExp(source, "i");
+      })
+      .filter(Boolean),
+  });
+});
+
+GNP_NORMALIZATION_DICTIONARY.transmission_tokens = Array.from(
+  new Set(
+    Array.from(TRANSMISSION_TOKEN_VARIANTS)
+      .flatMap((token) => {
+        const spaced = token.toUpperCase().replace(/\s+/g, " ").trim();
+        const compact = spaced.replace(/\s+/g, "");
+        return [spaced, compact];
+      })
+      .filter(Boolean)
+  )
+);
+
+GNP_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio = Array.from(
+  new Set(
+    GNP_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.map((token) =>
+      token
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toUpperCase()
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+  )
+);
+
 function applyProtectedTokens(value = "") {
   let output = value;
   PROTECTED_HYPHEN_TOKENS.forEach(({ regex, placeholder }) => {
@@ -249,12 +363,24 @@ function restoreProtectedTokens(value = "") {
   return output;
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function stripTokens(text = "", tokens = []) {
+  if (!text || typeof text !== "string") return "";
+  let output = text;
+  tokens.forEach((token) => {
+    const trimmed = token.trim();
+    if (!trimmed) return;
+    const useWordBoundary = /^[A-Z0-9 ]+$/.test(trimmed);
+    const pattern = useWordBoundary
+      ? new RegExp(`\\b${escapeRegExp(trimmed)}\\b`, "gi")
+      : new RegExp(escapeRegExp(trimmed), "gi");
+    output = output.replace(pattern, " ");
+  });
+  return output;
 }
 
-function normalizeDrivetrain(versionString = "") {
-  return versionString
+function normalizeDrivetrain(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value
     .replace(/\bALL[-\s]?WHEEL DRIVE\b/g, "AWD")
     .replace(/\b4MATIC\b/g, "AWD")
     .replace(/\bQUATTRO\b/g, "AWD")
@@ -274,21 +400,21 @@ function normalizeDrivetrain(versionString = "") {
     .replace(/\bRWD\b/g, "RWD");
 }
 
-function normalizeCylinders(versionString = "") {
-  if (!versionString || typeof versionString !== "string") return "";
-  let normalized = versionString;
+function normalizeCylinders(value = "") {
+  if (!value || typeof value !== "string") return "";
+  let output = value;
   Object.entries(GNP_NORMALIZATION_DICTIONARY.cylinder_normalization).forEach(
     ([from, to]) => {
-      const regex = new RegExp(`\\b${escapeRegExp(from)}\\b`, "g");
-      normalized = normalized.replace(regex, to);
+      const pattern = new RegExp(`\\b${escapeRegExp(from)}\\b`, "gi");
+      output = output.replace(pattern, to);
     }
   );
-  return normalized;
+  return output;
 }
 
-function normalizeEngineDisplacement(versionString = "") {
-  if (!versionString || typeof versionString !== "string") return "";
-  return versionString
+function normalizeEngineDisplacement(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value
     .replace(/\b(\d)(\d)L\b/g, "$1.$2L")
     .replace(/\b(?<!\d\.)\d+L\b/g, (match) => `${match.slice(0, -1)}.0L`)
     .replace(/\b(?<!\d\.)\d+\s+L\b/g, (match) => {
@@ -297,91 +423,113 @@ function normalizeEngineDisplacement(versionString = "") {
     });
 }
 
-function normalizeStandaloneLiters(versionString = "") {
-  if (!versionString || typeof versionString !== "string") return "";
-  return versionString.replace(/\b(\d+\.\d+)(?!L\b)(?!\d)(?![A-Z])/g, (match) => {
+function normalizeStandaloneLiters(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value.replace(/\b(\d+\.\d+)(?!L\b)(?!\d)(?![A-Z])/g, (match) => {
     const liters = parseFloat(match);
-    if (!Number.isFinite(liters) || liters <= 0 || liters > 10) return match;
+    if (!Number.isFinite(liters) || liters <= 0 || liters > 12) return match;
     return `${match}L`;
   });
 }
 
-function normalizeHorsepower(versionString = "") {
-  if (!versionString || typeof versionString !== "string") return "";
-  return versionString
-    .replace(/\b(\d+)\s*C\.P\.?\b/g, "$1HP")
-    .replace(/\b(\d+)\s*CP\b/g, "$1HP")
-    .replace(/\b(\d+)\s*H\.P\.?\b/g, "$1HP")
-    .replace(/\b(\d+)\s*HP\b/g, "$1HP");
+function normalizeHorsepower(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value
+    .replace(/\b(\d+)\s*C\.P\.?\b/gi, "$1HP")
+    .replace(/\b(\d+)\s*CP\b/gi, "$1HP")
+    .replace(/\b(\d+)\s*H\.P\.?\b/gi, "$1HP")
+    .replace(/\b(\d+)\s*HP\b/gi, "$1HP");
 }
 
-function normalizeTurboTokens(versionString = "") {
-  if (!versionString || typeof versionString !== "string") return "";
-  return versionString
-    .replace(/\bTBO\b/g, "TURBO")
-    .replace(/\bBI[-\s]?TURBO\b/g, "BITURBO")
-    .replace(/\bTWIN[-\s]?TURBO\b/g, "TWIN TURBO")
-    .replace(/\bT\/T\b/g, "TWIN TURBO");
+function formatTurboDisplacement(raw = "") {
+  const value = parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0 || value > 12) {
+    return "";
+  }
+  return Number.isInteger(value) ? `${value}.0` : value.toString();
 }
 
-function normalizeTurboSuffix(versionString = "") {
-  if (!versionString || typeof versionString !== "string") return "";
-  return versionString
-    .replace(/\b(\d+\.\d+)T\b/g, "$1L TURBO")
-    .replace(/\b(\d+\.\d+)\s*T\b/g, "$1L TURBO");
-}
+function normalizeTurboTokens(value = "") {
+  if (!value || typeof value !== "string") return "";
 
-function normalizeTonCapacity(versionString = "") {
-  if (!versionString || typeof versionString !== "string") return "";
-  return versionString.replace(
-    /\b(\d+(?:\.\d+)?)\s*TON\b/g,
-    (_, value) => `${value}TON`
-  );
-}
-
-function stripLeadingPhrases(text, phrases = []) {
-  let cleaned = text.trim();
-  phrases.forEach((phrase) => {
-    if (!phrase) return;
-    const normalized = phrase
-      .toString()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toUpperCase()
-      .replace(/\s+/g, " ")
-      .trim();
-    if (!normalized) return;
-    const variations = [normalized, normalized.replace(/\s+/g, "")];
-    let changed = true;
-    while (changed && cleaned) {
-      changed = false;
-      for (const variant of variations) {
-        if (!variant) continue;
-        if (cleaned === variant) {
-          cleaned = "";
-          changed = true;
-        } else if (cleaned.startsWith(`${variant} `)) {
-          cleaned = cleaned.slice(variant.length).trimStart();
-          changed = true;
-        }
-      }
-    }
+  const explicitLiters = [];
+  value.replace(/\b\d+(?:\.\d+)?L\b/gi, (match, offset) => {
+    explicitLiters.push({ token: match, offset });
+    return match;
   });
-  return cleaned.trim();
+
+  const applyTurboReplacement = (fullMatch, rawNumber, hasL, offset) => {
+    const formatted = formatTurboDisplacement(rawNumber);
+    if (!formatted) return fullMatch;
+
+    const matchEnd = offset + fullMatch.length;
+    const hasOtherLiters = explicitLiters.some(
+      ({ token, offset: literOffset }) => {
+        const literEnd = literOffset + token.length;
+        return literOffset < offset || literOffset >= matchEnd;
+      }
+    );
+
+    if (hasL) {
+      return `${formatted}L TURBO`;
+    }
+    if (hasOtherLiters) {
+      return `${formatted} TURBO`;
+    }
+    return `${formatted}L TURBO`;
+  };
+
+  let output = value.replace(
+    /\b(\d+(?:\.\d+)?)(L)?[\s-]*T\b/gi,
+    applyTurboReplacement
+  );
+  output = output.replace(
+    /(\d+(?:\.\d+)?)(L)?(?:\s|-)?(TFSI|TSI)\b/gi,
+    (fullMatch, rawNumber, hasL, _alias, offset) =>
+      applyTurboReplacement(fullMatch, rawNumber, hasL, offset)
+  );
+
+  output = output
+    .replace(/\bTBO\b/gi, "TURBO")
+    .replace(/\bBI[\s-]?TURBO\b/gi, "BITURBO")
+    .replace(/\bTWIN[\s-]?TURBO\b/gi, "TWIN TURBO")
+    .replace(/\bT\/T\b/gi, "TWIN TURBO");
+
+  return output;
+}
+
+function applyEngineAliases(value = "") {
+  if (!value || typeof value !== "string") return "";
+  let output = value;
+  ENGINE_ALIAS_PATTERNS.forEach(({ regex, replacement }) => {
+    output = output.replace(regex, replacement);
+  });
+  return output;
+}
+
+function normalizeTurboSuffix(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value
+    .replace(/\b(\d+\.\d+)T\b/gi, "$1L TURBO")
+    .replace(/\b(\d+\.\d+)\s*T\b/gi, "$1L TURBO");
+}
+
+function normalizeTonCapacity(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value.replace(/\b(\d+(?:\.\d+)?)\s*TON\b/gi, (_, ton) => `${ton}TON`);
 }
 
 function normalizeBrand(value = "") {
-  if (!value) return "";
+  if (!value || typeof value !== "string") return "";
   const normalized = value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .trim()
     .toUpperCase();
-  const mapped = GNP_NORMALIZATION_DICTIONARY.brand_aliases[normalized];
-  return (mapped || normalized).trim();
+  return BRAND_ALIASES[normalized] || normalized;
 }
 
-function normalizeText(value) {
+function normalizeText(value = "") {
   return value
     ? value
         .toString()
@@ -392,24 +540,24 @@ function normalizeText(value) {
     : "";
 }
 
-function cleanVersionString(versionString, marca = "", modelo = "") {
+function cleanVersionString(versionString = "", brand = "", model = "") {
   if (!versionString || typeof versionString !== "string") return "";
 
   let cleaned = versionString
+    .toString()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
     .replace(/"/g, " ")
     .trim();
-  cleaned = applyProtectedTokens(cleaned);
 
+  cleaned = applyProtectedTokens(cleaned);
   cleaned = cleaned.replace(
     GNP_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
     "$1.$2"
   );
-  cleaned = stripLeadingPhrases(cleaned, [marca, modelo]);
-
-  cleaned = cleaned.replace(/[,/]/g, " ");
+  cleaned = cleaned.replace(/[\\/]/g, " ");
+  cleaned = cleaned.replace(/\s*&\s*/g, " ");
   cleaned = cleaned.replace(/-/g, " ");
   cleaned = cleaned.replace(/(\d)([A-Z])/g, "$1 $2");
   cleaned = cleaned.replace(/([A-Z])(\d)/g, "$1 $2");
@@ -430,22 +578,47 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
   cleaned = normalizeTurboSuffix(cleaned);
   cleaned = normalizeHorsepower(cleaned);
   cleaned = normalizeTurboTokens(cleaned);
+  cleaned = applyEngineAliases(cleaned);
 
-  GNP_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.forEach((token) => {
-    const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
-    cleaned = cleaned.replace(regex, " ");
-  });
+  cleaned = stripTokens(
+    cleaned,
+    GNP_NORMALIZATION_DICTIONARY.transmission_tokens
+  );
+  cleaned = stripTokens(
+    cleaned,
+    GNP_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio
+  );
 
-  GNP_NORMALIZATION_DICTIONARY.transmission_tokens_to_strip.forEach((token) => {
-    const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
-    cleaned = cleaned.replace(regex, " ");
-  });
+  if (brand) {
+    const normalizedBrand = normalizeBrand(brand);
+    const variants = [
+      normalizedBrand,
+      normalizedBrand.replace(/\s+/g, ""),
+      normalizedBrand.split(" ")[0],
+    ].filter(Boolean);
+    variants.forEach((variant) => {
+      cleaned = cleaned.replace(
+        new RegExp(`\\b${escapeRegExp(variant)}\\b`, "gi"),
+        " "
+      );
+    });
+  }
 
-  cleaned = cleaned.replace(/\s*\/\s*/g, " ");
+  if (model) {
+    const normalizedModel = normalizeText(model);
+    if (normalizedModel) {
+      cleaned = cleaned.replace(
+        new RegExp(`\\b${escapeRegExp(normalizedModel)}\\b`, "gi"),
+        " "
+      );
+    }
+  }
+
   cleaned = cleaned.replace(
     GNP_NORMALIZATION_DICTIONARY.regex_patterns.stray_punctuation,
     " "
   );
+  cleaned = restoreProtectedTokens(cleaned);
   cleaned = cleaned.replace(
     GNP_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
     " "
@@ -454,7 +627,6 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
     GNP_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces,
     ""
   );
-  cleaned = restoreProtectedTokens(cleaned);
 
   return cleaned;
 }
@@ -463,71 +635,79 @@ function extractDoorsAndOccupants(versionOriginal = "") {
   if (!versionOriginal || typeof versionOriginal !== "string") {
     return { doors: "", occupants: "" };
   }
+
   const normalized = versionOriginal
+    .toString()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
-    .replace(/[,/]/g, " ");
+    .replace(/[-,/]/g, " ");
 
   const doorsMatch = normalized.match(
     /\b(\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/
   );
-  const occMatch = normalized.match(/\b0?(\d{1,2})\s*OCUP\b/);
+  const occMatch = normalized.match(
+    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/
+  );
 
-  const doors = doorsMatch ? `${doorsMatch[1]}PUERTAS` : "";
-  const occupants =
-    occMatch && !Number.isNaN(parseInt(occMatch[1], 10))
-      ? `${parseInt(occMatch[1], 10)}OCUP`
-      : "";
-
-  return { doors, occupants };
+  return {
+    doors: doorsMatch ? `${parseInt(doorsMatch[1], 10)}PUERTAS` : "",
+    occupants: occMatch ? `${parseInt(occMatch[1], 10)}OCUP` : "",
+  };
 }
 
-function normalizeTransmission(transmissionCode) {
-  if (!transmissionCode || typeof transmissionCode !== "string") return "";
-  const normalized = transmissionCode
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .trim();
-  return (
-    GNP_NORMALIZATION_DICTIONARY.transmission_normalization[normalized] ||
-    normalized
-  );
+function normalizeTransmission(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number") {
+    if (value === 1) return "MANUAL";
+    if (value === 2) return "AUTO";
+    return "";
+  }
+  const asString = value.toString().trim();
+  if (!asString) return "";
+  if (/^[12]$/.test(asString)) {
+    return asString === "1" ? "MANUAL" : "AUTO";
+  }
+  const normalizedToken = sanitizeTransmissionToken(asString);
+  if (!normalizedToken) return "";
+  if (CANONICAL_TRANSMISSIONS.has(normalizedToken)) {
+    return normalizedToken;
+  }
+  if (TRANSMISSION_TOKEN_MAP.has(normalizedToken)) {
+    return TRANSMISSION_TOKEN_MAP.get(normalizedToken);
+  }
+  return "";
 }
 
 function inferTransmissionFromVersion(versionOriginal = "") {
-  if (!versionOriginal || typeof versionOriginal !== "string") return "";
-  const normalized = versionOriginal
+  if (!versionOriginal) return "";
+  const normalizedVersion = versionOriginal
+    .toString()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase();
-  for (const token of Object.keys(
-    GNP_NORMALIZATION_DICTIONARY.transmission_normalization
-  )) {
-    const regex = new RegExp(`\\b${escapeRegExp(token)}\\b`, "g");
-    if (regex.test(normalized)) {
-      return GNP_NORMALIZATION_DICTIONARY.transmission_normalization[token];
+    .toUpperCase()
+    .replace(/-/g, " ");
+  for (const { canonical, patterns } of TRANSMISSION_SEARCH_PATTERNS) {
+    for (const pattern of patterns) {
+      if (pattern.test(normalizedVersion)) {
+        return canonical;
+      }
     }
   }
   return "";
 }
 
-function dedupeTokens(value = "") {
-  if (!value) return "";
-  const tokens = value.split(" ").filter(Boolean);
+function dedupeTokens(tokens = []) {
   const seen = new Set();
-  const deduped = [];
+  const result = [];
   tokens.forEach((token) => {
-    const formatted = token.trim();
-    if (!formatted) return;
-    if (formatted.length === 1 && !/\d/.test(formatted)) return;
-    if (!seen.has(formatted)) {
-      seen.add(formatted);
-      deduped.push(formatted);
-    }
+    const normalized = token.trim();
+    if (!normalized) return;
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    result.push(normalized);
   });
-  return deduped.join(" ");
+  return result;
 }
 
 function validateRecord(record) {
@@ -551,15 +731,20 @@ function validateRecord(record) {
   ) {
     errors.push("version is required");
   }
-  if (!record.transmision || record.transmision.toString().trim() === "") {
+  const transmission = record.transmision
+    ? record.transmision.toString().trim().toUpperCase()
+    : "";
+  if (!CANONICAL_TRANSMISSIONS.has(transmission)) {
     errors.push("transmision is required");
+  } else {
+    record.transmision = transmission;
   }
 
   return { isValid: errors.length === 0, errors };
 }
 
 function categorizeError(error) {
-  const message = error.message.toLowerCase();
+  const message = (error.message || "").toLowerCase();
   if (message.includes("validation")) return "VALIDATION_ERROR";
   if (message.includes("hash")) return "HASH_GENERATION_ERROR";
   return "NORMALIZATION_ERROR";
@@ -580,43 +765,90 @@ function createCommercialHash(vehicle) {
 }
 
 function processGnpRecord(record) {
+  const versionOriginal = record.version_original
+    ? record.version_original.toString()
+    : "";
   const derivedTransmission =
     normalizeTransmission(record.transmision) ||
-    inferTransmissionFromVersion(record.version_original);
+    inferTransmissionFromVersion(versionOriginal);
 
   record.transmision = derivedTransmission;
 
   const marcaNormalizada = normalizeBrand(record.marca || "");
   const modeloNormalizado = normalizeText(record.modelo || "");
 
-  const { doors, occupants } = extractDoorsAndOccupants(
-    record.version_original || ""
-  );
+  const { doors, occupants } = extractDoorsAndOccupants(versionOriginal);
 
   const validation = validateRecord({
     ...record,
     marca: marcaNormalizada,
     modelo: modeloNormalizado,
+    transmision: record.transmision,
   });
   if (!validation.isValid) {
     throw new Error(`Validation failed: ${validation.errors.join(", ")}`);
   }
 
   let versionLimpia = cleanVersionString(
-    record.version_original || "",
+    versionOriginal,
     marcaNormalizada,
     modeloNormalizado
   );
 
   versionLimpia = versionLimpia
     .replace(/\b\d\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/gi, " ")
-    .replace(/\b0?\d+\s*OCUP\b/gi, " ")
+    .replace(
+      /\b0?\d+\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/gi,
+      " "
+    )
+    .replace(/\s+[.,](?=\s|$)/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  versionLimpia = dedupeTokens(
-    [versionLimpia, doors, occupants].filter(Boolean).join(" ").trim()
-  );
+  const tokens = versionLimpia.split(" ").filter(Boolean);
+  const sanitizedTokens = [];
+  let fallbackDoors = "";
+
+  tokens.forEach((token, idx, arr) => {
+    if (!token) return;
+    if (/^[.,]$/.test(token)) return;
+    if (/^\d+$/.test(token)) {
+      if (!doors && !fallbackDoors) {
+        const numericValue = parseInt(token, 10);
+        if (Number.isFinite(numericValue) && numericValue > 0) {
+          fallbackDoors = `${numericValue}PUERTAS`;
+        }
+      }
+      const next = (arr[idx + 1] || "").toUpperCase();
+      const prev = (arr[idx - 1] || "").toUpperCase();
+      if (
+        /^\d+OCUP$/i.test(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(prev)
+      ) {
+        return;
+      }
+      sanitizedTokens.push(token);
+      return;
+    }
+    const upperToken = token.toUpperCase();
+    if (upperToken.length === 1 && RESIDUAL_SINGLE_TOKENS.has(upperToken)) {
+      return;
+    }
+    sanitizedTokens.push(token);
+  });
+
+  versionLimpia = dedupeTokens(sanitizedTokens)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const finalDoors = doors || fallbackDoors;
+  versionLimpia = [versionLimpia, finalDoors, occupants]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   if (!versionLimpia) {
     throw new Error("Normalization produced empty version_limpia");
@@ -629,7 +861,7 @@ function processGnpRecord(record) {
     modelo: modeloNormalizado,
     anio: record.anio,
     transmision: record.transmision,
-    version_original: record.version_original,
+    version_original: versionOriginal,
     version_limpia: versionLimpia,
     fecha_procesamiento: new Date().toISOString(),
   };
@@ -646,8 +878,7 @@ function normalizeGnpData(records = []) {
     const batch = records.slice(i, i + BATCH_SIZE);
     for (const record of batch) {
       try {
-        const processed = processGnpRecord(record);
-        results.push(processed);
+        results.push(processGnpRecord(record));
       } catch (error) {
         errors.push({
           error: true,
@@ -668,7 +899,7 @@ function normalizeGnpRecords(items = []) {
   const rawRecords = items.map((it) => (it && it.json ? it.json : it));
   const { results, errors } = normalizeGnpData(rawRecords);
   const successItems = results.map((record) => ({ json: record }));
-  const errorItems = errors.map((err) => ({ json: err }));
+  const errorItems = errors.map((error) => ({ json: error }));
   return [...successItems, ...errorItems];
 }
 

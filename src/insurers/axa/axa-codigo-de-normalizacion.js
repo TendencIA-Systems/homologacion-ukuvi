@@ -52,6 +52,8 @@ const AXA_NORMALIZATION_DICTIONARY = {
     "CAMARA",
     "FRENOS CERAM",
     "FRENOS CERAMICA",
+    "COMFORT",
+    "CONFORT",
     "STD",
     "STD.",
     "AUT",
@@ -112,8 +114,8 @@ const AXA_NORMALIZATION_DICTIONARY = {
   transmission_normalization: {
     1: "MANUAL",
     2: "AUTO",
-    "1": "MANUAL",
-    "2": "AUTO",
+    1: "MANUAL",
+    2: "AUTO",
     STD: "MANUAL",
     "STD.": "MANUAL",
     MANUAL: "MANUAL",
@@ -178,7 +180,7 @@ const INVALID_TRANSMISSION_CODES = new Set([
   "SD",
   "SIN DATO",
   "SIN INFORMACION",
-  "SIN INFORMACIÓN",
+  "SIN INFORMACIï¿½N",
   "NO APLICA",
   "NO APL",
   "NO DEFINIDO",
@@ -188,13 +190,26 @@ const NUMERIC_TRANSMISSION_MAP = {
   0: "",
   1: "MANUAL",
   2: "AUTO",
-  "0": "",
-  "1": "MANUAL",
-  "2": "AUTO",
+  0: "",
+  1: "MANUAL",
+  2: "AUTO",
 };
 
 const NORMALIZED_TRANSMISSIONS = new Set(["AUTO", "MANUAL"]);
 const RESIDUAL_SINGLE_TOKENS = new Set(["A", "B", "C", "E", "Q"]);
+
+const NUMERIC_CONTEXT_TOKENS = new Set([
+  "OCUP",
+  "OCUPANTE",
+  "OCUPANTES",
+  "OCUPACION",
+  "PASAJEROS",
+  "PASAJERO",
+  "PAS",
+  "PUERTAS",
+  "PUERTA",
+  "PAX",
+]);
 
 const PROTECTED_HYPHEN_TOKENS = [
   {
@@ -222,6 +237,14 @@ const PROTECTED_HYPHEN_TOKENS = [
     placeholder: "__PROTECTED_S_LINE__",
     canonical: "S-LINE",
   },
+];
+
+const ENGINE_ALIAS_PATTERNS = [
+  { regex: /\bT[\s-]?FSI\b/gi, replacement: "TURBO" },
+  { regex: /\bT[\s-]?SI\b/gi, replacement: "TURBO" },
+  { regex: /\bFSI\s*TURBO\b/gi, replacement: "TURBO" },
+  { regex: /\bFSI\b/gi, replacement: "FSI" },
+  { regex: /\bGDI\b/gi, replacement: "GDI" },
 ];
 
 function escapeRegex(text = "") {
@@ -299,11 +322,76 @@ function normalizeStandaloneLiters(value = "") {
   if (!value || typeof value !== "string") return "";
   return value
     .replace(/\b(\d+\.\d+)\s+L\b/g, "$1L")
-    .replace(/\b(\d+\.\d+)(?=\s|$)/g, (match) => {
-      const liters = parseFloat(match);
-      if (!Number.isFinite(liters) || liters <= 0 || liters > 12) return match;
-      return `${match}L`;
-    });
+    .replace(
+      /\b(\d+\.\d+)(?=\s|$)(?!\s*(?:L\b|\d|TURBO\b|BITURBO\b|SUPERCHARGED\b|SUPERCARGADO\b))/g,
+      (match) => {
+        const liters = parseFloat(match);
+        if (!Number.isFinite(liters) || liters <= 0 || liters > 12)
+          return match;
+        return `${match}L`;
+      }
+    );
+}
+
+function applyEngineAliases(value = "") {
+  if (!value || typeof value !== "string") return "";
+  let output = value;
+  ENGINE_ALIAS_PATTERNS.forEach(({ regex, replacement }) => {
+    output = output.replace(regex, replacement);
+  });
+  return output;
+}
+function formatTurboDisplacement(raw = "") {
+  const value = parseFloat(raw);
+  if (!Number.isFinite(value) || value <= 0 || value > 12) {
+    return "";
+  }
+  return Number.isInteger(value) ? value.toString() + ".0" : value.toString();
+}
+
+function normalizeTurboTokens(value = "") {
+  if (!value || typeof value !== "string") return "";
+
+  const explicitLiters = [];
+  value.replace(/\b\d+(?:\.\d+)?L\b/gi, (match, offset) => {
+    explicitLiters.push({ token: match, offset });
+    return match;
+  });
+
+  const applyTurboReplacement = (fullMatch, rawNumber, hasL, offset) => {
+    const formatted = formatTurboDisplacement(rawNumber);
+    if (!formatted) return fullMatch;
+
+    const matchEnd = offset + fullMatch.length;
+    const hasOtherLiters = explicitLiters.some(
+      ({ token, offset: literOffset }) => {
+        const literEnd = literOffset + token.length;
+        return literOffset < offset || literOffset >= matchEnd;
+      }
+    );
+
+    if (hasL) {
+      return formatted + "L TURBO";
+    }
+
+    if (hasOtherLiters) {
+      return formatted + " TURBO";
+    }
+
+    return formatted + "L TURBO";
+  };
+
+  value = value.replace(
+    /\b(\d+(?:\.\d+)?)(L)?[\s-]*T\b/gi,
+    applyTurboReplacement
+  );
+  value = value.replace(
+    /(\d+(?:\.\d+)?)(L)?(?:\s|-)?(TFSI|TSI)\b/gi,
+    (fullMatch, rawNumber, hasL, _alias, offset) =>
+      applyTurboReplacement(fullMatch, rawNumber, hasL, offset)
+  );
+
+  return value;
 }
 
 function cleanAxaModel(rawModel = "", marca = "") {
@@ -323,7 +411,6 @@ function cleanAxaModel(rawModel = "", marca = "") {
     });
   }
 
-  cleaned = cleaned.replace(/^[A-Z]{1,2}\s+(?=[A-Z])/g, "");
   cleaned = cleaned.replace(/\s+/g, " ").trim();
   return cleaned;
 }
@@ -333,11 +420,12 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
 
   let cleaned = versionString.toUpperCase().trim();
   cleaned = applyProtectedTokens(cleaned);
-  cleaned = cleaned.replace(/^[A-Z]{1,2}\s+(?=[A-Z])/g, "");
   cleaned = cleaned.replace(/[\/,]/g, " ");
   cleaned = cleaned.replace(/-/g, " ");
 
   cleaned = normalizeDrivetrain(cleaned);
+  cleaned = normalizeTurboTokens(cleaned);
+  cleaned = applyEngineAliases(cleaned);
   cleaned = normalizeCylinders(cleaned);
   cleaned = normalizeEngineDisplacement(cleaned);
   cleaned = normalizeStandaloneLiters(cleaned);
@@ -365,7 +453,10 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
       normalizedMarca.split(" ")[0],
     ].filter(Boolean);
     variants.forEach((variant) => {
-      cleaned = cleaned.replace(new RegExp(`\\b${escapeRegex(variant)}\\b`, "gi"), " ");
+      cleaned = cleaned.replace(
+        new RegExp(`\\b${escapeRegex(variant)}\\b`, "gi"),
+        " "
+      );
     });
   }
 
@@ -522,7 +613,9 @@ function normalizeAxaData(records = []) {
 }
 
 function normalizeAxaRecords(items = []) {
-  const rawRecords = items.map((item) => (item && item.json ? item.json : item));
+  const rawRecords = items.map((item) =>
+    item && item.json ? item.json : item
+  );
   const { results, errors } = normalizeAxaData(rawRecords);
   const successItems = results.map((record) => ({ json: record }));
   const errorItems = errors.map((error) => ({ json: error }));
@@ -586,12 +679,17 @@ function processAxaRecord(record) {
           fallbackDoors = `${numericValue}PUERTAS`;
         }
       }
-      const next = arr[idx + 1] || "";
-      if (/^\d+OCUP$/i.test(next) || /^OCUP$/i.test(next)) return;
+      const next = (arr[idx + 1] || "").toUpperCase();
+      const prev = (arr[idx - 1] || "").toUpperCase();
+      if (/^\d+OCUP$/i.test(next) || NUMERIC_CONTEXT_TOKENS.has(next) || NUMERIC_CONTEXT_TOKENS.has(prev)) {
+        return;
+      }
+      sanitizedTokens.push(token);
       return;
     }
     const upperToken = token.toUpperCase();
-    if (upperToken.length === 1 && RESIDUAL_SINGLE_TOKENS.has(upperToken)) return;
+    if (upperToken.length === 1 && RESIDUAL_SINGLE_TOKENS.has(upperToken))
+      return;
     sanitizedTokens.push(token);
   });
 
@@ -628,7 +726,7 @@ function normalizeActiveFlag(value) {
   if (typeof value === "number") return value === 1;
   if (typeof value === "string") {
     const normalized = value.trim().toLowerCase();
-    if (["true", "1", "t", "activo", "si", "sí"].includes(normalized))
+    if (["true", "1", "t", "activo", "si", "sï¿½"].includes(normalized))
       return true;
     if (["false", "0", "f", "inactivo", "no"].includes(normalized))
       return false;
