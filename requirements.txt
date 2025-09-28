@@ -1,0 +1,3 @@
+inngest
+fastapi>=0.110
+uvicorn[standard]>=0.30
