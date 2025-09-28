@@ -1,4 +1,4 @@
-inngest
+inngest[connect]>=0.5.0
 uvicorn[standard]>=0.30
 structlog
 asyncio

@@ -10,3 +10,8 @@ from .client import inngest_client
 
 async def generate_embeddings(ctx: inngest.Context) -> str:
     return "Hello world!"
+
+
+functions = [generate_embeddings]
+
+__all__ = ["functions", "generate_embeddings"]

@@ -2,3 +2,4 @@
 .env
 /data/pipeline-result/
 .venv
+src/inngest/__pycache__
