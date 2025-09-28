@@ -42,11 +42,15 @@ const ANA_NORMALIZATION_DICTIONARY = {
     "SIS.NAV.",
     "T.S",
     "T.P.",
+    "L.N",
+    "VE",
     "FBX",
     "NAVI",
     "CAM TRAS",
     "SENSOR",
     "CAMARA",
+    "COMFORT",
+    "CONFORT",
     "FRENOS CERAM",
     "FRENOS CERAMICA",
     "TBO",
@@ -54,10 +58,14 @@ const ANA_NORMALIZATION_DICTIONARY = {
     "STD.",
     "AUT",
     "MANUAL",
+    "ESTANDAR",
     "AUT.",
     "AUTOMATICA",
     "AUTOMATICO",
     "AUTOMATIC",
+    "AUTOMATI",
+    "AUTOMA",
+    "AUTOM",
     "CVT",
     "DSG",
     "S TRONIC",
@@ -130,6 +138,9 @@ const ANA_NORMALIZATION_DICTIONARY = {
     AUTOMATICA: "AUTO",
     AUTOMATICO: "AUTO",
     AUTOMATIC: "AUTO",
+    AUTOMATI: "AUTO",
+    AUTOMA: "AUTO",
+    AUTOM: "AUTO",
     CVT: "AUTO",
     CVT7: "AUTO",
     DSG: "AUTO",
@@ -175,7 +186,7 @@ const INVALID_TRANSMISSION_CODES = new Set([
   "SD",
   "SIN DATO",
   "SIN INFORMACION",
-  "SIN INFORMACI�N",
+  "SIN INFORMACIÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“N",
   "NO APLICA",
   "NO APL",
   "NO DEFINIDO",
@@ -236,6 +247,11 @@ function restoreProtectedTokens(value = "") {
     output = output.replace(placeholderRegex, canonical);
   });
   return output;
+}
+
+function expandTurboSuffix(text = "") {
+  if (!text || typeof text !== "string") return "";
+  return text.replace(/\b(\d+\.\d+)(?:L)?T\b/gi, (_, num) => `${num}L TURBO`);
 }
 
 function normalizeStandaloneLiters(value = "") {
@@ -337,6 +353,7 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   cleaned = normalizeCylinders(cleaned);
   cleaned = normalizeEngineDisplacement(cleaned);
   cleaned = normalizeStandaloneLiters(cleaned);
+  cleaned = expandTurboSuffix(cleaned);
   cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s*CP\b/g, "$1HP");
   cleaned = cleaned.replace(/\b(\d+)\s*CC\b/g, "$1CC");
   cleaned = cleaned.replace(/\b(\d+\.\d+)I\b/g, "$1L");
@@ -371,7 +388,8 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   cleaned = cleaned
     .replace(/\bHB\b/g, "HATCHBACK")
     .replace(/\bTUR\b/g, "TURBO")
-    .replace(/\bCONV\b/g, "CONVERTIBLE");
+    .replace(/\bCONV\b/g, "CONVERTIBLE")
+    .replace(/\bPICK\s*UP\b/g, "PICKUP");
 
   cleaned = cleaned
     .replace(/\b\d+\s*PUERTAS?\b/gi, " ")
@@ -557,6 +575,7 @@ function processAnaRecord(record) {
     modeloFinal || "",
     marcaNormalizada || ""
   );
+  versionLimpia = versionLimpia.replace(/\b(\d+\.\d+)L?T\b/g, "$1L TURBO");
   versionLimpia = versionLimpia
     .replace(/\b\d\s*P(?:TAS?|TS?|TA)?\.?\b/gi, " ")
     .replace(/\b\d+\s*PUERTAS?\b/gi, " ")
@@ -591,6 +610,10 @@ function processAnaRecord(record) {
 
   versionLimpia = dedupeTokens(sanitizedTokens)
     .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  versionLimpia = versionLimpia
+    .replace(/\bABS\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -639,7 +662,7 @@ function validateRecord(record) {
   if (!record.modelo || record.modelo.toString().trim() === "") {
     errors.push("modelo is required");
   }
-  if (!record.anio || record.anio < 2000 || record.anio > 2030) {
+  if (!record.anio || record.anio < 1990 || record.anio > 2035) {
     errors.push("anio must be between 2000-2030");
   }
   if (
@@ -684,6 +707,3 @@ function escapeRegex(value) {
 
 const outputItems = normalizeAnaRecords(items);
 return outputItems;
-
-
-

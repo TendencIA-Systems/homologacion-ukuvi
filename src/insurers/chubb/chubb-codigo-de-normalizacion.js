@@ -1,5 +1,5 @@
 /**
- * Chubb ETL - Normalization Code Node
+ * Chubb ETL - Normalization Code Node (updated: drop floating numbers used for doors)
  *
  * Mirrors the insurer normalization pipeline used for Zurich/Qualitas/Atlas.
  * Intended for execution inside an n8n Code node: it cleans Chubb vehicle
@@ -47,6 +47,7 @@ const CHUBB_NORMALIZATION_DICTIONARY = {
     "CQ",
     "TELA",
     "CT",
+    "IEM",
     "SMP",
     "SM",
     "IPC",
@@ -56,6 +57,7 @@ const CHUBB_NORMALIZATION_DICTIONARY = {
     "SENSOR",
     "CAMARA",
     "IMP",
+    "ISM",
     "BTU",
     "TBO",
     "STD",
@@ -183,6 +185,9 @@ const INVALID_TRANSMISSION_CODES = new Set([
 
 const NORMALIZED_TRANSMISSIONS = new Set(["AUTO", "MANUAL"]);
 const NUMERIC_CONTEXT_TOKENS = new Set([
+  "O",
+  "OC",
+  "OCU",
   "OCUP",
   "OCUPANTE",
   "OCUPANTES",
@@ -322,7 +327,10 @@ function normalizeTurboTokens(value = "") {
     return `${formatted}L TURBO`;
   };
 
-  let output = value.replace(/\b(\d+(?:\.\d+)?)(L)?[\s-]*T\b/gi, applyTurboReplacement);
+  let output = value.replace(
+    /\b(\d+(?:\.\d+)?)(L)?[\s-]*T\b/gi,
+    applyTurboReplacement
+  );
   output = output.replace(
     /(\d+(?:\.\d+)?)(L)?(?:\s|-)?(TFSI|TSI)\b/gi,
     (fullMatch, rawNumber, hasL, _alias, offset) =>
@@ -409,7 +417,8 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   cleaned = cleaned
     .replace(/\bHB\b/g, "HATCHBACK")
     .replace(/\bTUR\b/g, "TURBO")
-    .replace(/\bCONV\b/g, "CONVERTIBLE");
+    .replace(/\bCONV\b/g, "CONVERTIBLE")
+    .replace(/\bPICK\s*UP\b/g, "PICKUP");
 
   cleaned = cleaned
     .replace(/\b\d+\s*PUERTAS?\b/gi, " ")
@@ -587,26 +596,43 @@ function processChubbRecord(record) {
     .replace(/\s+/g, " ")
     .trim();
 
+  // FIX: Never let a bare number linger if used for doors (or if it's context-free noise)
   const tokens = versionLimpia.split(" ").filter(Boolean);
   let fallbackDoors = "";
   const sanitizedTokens = [];
+
   tokens.forEach((token, idx, arr) => {
     if (/^[.,]$/.test(token)) return;
+
     if (/^\d+$/.test(token)) {
-      if (!doors && !fallbackDoors) {
-        const numericValue = parseInt(token, 10);
-        if (Number.isFinite(numericValue) && numericValue > 0) {
-          fallbackDoors = `${numericValue}PUERTAS`;
-        }
+      const numericValue = parseInt(token, 10);
+
+      // Use as fallback door count, but DO NOT keep the number token
+      if (
+        !doors &&
+        !fallbackDoors &&
+        Number.isFinite(numericValue) &&
+        numericValue > 0
+      ) {
+        fallbackDoors = `${numericValue}PUERTAS`;
+        return; // drop the floating number
       }
+
+      // If adjacent to numeric context (OCUP, PUERTAS, etc.), drop the bare number
       const next = (arr[idx + 1] || "").toUpperCase();
       const prev = (arr[idx - 1] || "").toUpperCase();
-      if (/^\d+OCUP$/i.test(next) || NUMERIC_CONTEXT_TOKENS.has(next) || NUMERIC_CONTEXT_TOKENS.has(prev)) {
-        return;
+      if (
+        /^\d+OCUP$/i.test(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(prev)
+      ) {
+        return; // part of a numeric phrase; we still don't keep the naked number
       }
-      sanitizedTokens.push(token);
+
+      // Any other bare number is noise — drop it
       return;
     }
+
     sanitizedTokens.push(token);
   });
 

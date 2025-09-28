@@ -552,6 +552,8 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
     "$1 $2"
   );
   cleaned = cleaned.replace(/\bHB\b/g, "HATCHBACK");
+  cleaned = cleaned.replace(/\bGW\b/g, "WAGON");
+  cleaned = cleaned.replace(/\bPICK\s*UP\b/g, "PICKUP");
   cleaned = cleaned.replace(/\b(V|L|R|H|I|B)\s+(\d{1,2})\b/g, "$1$2");
   cleaned = cleaned.replace(/\b(\d{1,2})\s+CIL\b/g, "$1CIL");
   cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s+L\b/g, "$1L");
@@ -655,8 +657,9 @@ function extractDoorsAndOccupants(versionOriginal = "") {
   const doorsMatch = normalized.match(
     /\b(\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/
   );
-  const occMatch = normalized.match(/\b0?(\d{1,2})\s*OCUP\b/);
-
+  const occMatch = normalized.match(
+    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJ|PASAJEROS?|PAS)\b/
+  );
   const doors = doorsMatch ? `${doorsMatch[1]}PUERTAS` : "";
   const occupants =
     occMatch && !Number.isNaN(parseInt(occMatch[1], 10))

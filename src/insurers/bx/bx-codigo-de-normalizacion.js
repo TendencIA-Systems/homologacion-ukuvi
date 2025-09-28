@@ -531,6 +531,8 @@ function cleanVersionString(versionString = "", model = "", brand = "") {
   cleaned = cleaned.replace(/-/g, " ");
   cleaned = cleaned.replace(/PICK[\s-]?UP/g, "PICKUP");
   cleaned = cleaned.replace(/\bHB\b/g, "HATCHBACK");
+  cleaned = cleaned.replace(/\bGW\b/g, "WAGON");
+  cleaned = cleaned.replace(/\bPICK\s*UP\b/g, "PICKUP");
 
   cleaned = normalizeDrivetrain(cleaned);
   cleaned = normalizeTurboTokens(cleaned);

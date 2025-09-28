@@ -363,7 +363,9 @@ function cleanVersionString(versionString, model = "") {
   cleaned = cleaned
     .replace(/\bHB\b/g, "HATCHBACK")
     .replace(/\bTUR\b/g, "TURBO")
-    .replace(/\bCONV\b/g, "CONVERTIBLE");
+    .replace(/\bGW\b/g, "WAGON")
+    .replace(/\bCONV\b/g, "CONVERTIBLE")
+    .replace(/\bPICK\s*UP\b/g, "PICKUP");
 
   cleaned = normalizeEngineDisplacement(cleaned);
   cleaned = normalizeStandaloneLiters(cleaned);
@@ -401,7 +403,7 @@ function cleanVersionString(versionString, model = "") {
 function extractDoorsAndOccupants(versionOriginal = "") {
   const doorsMatch = versionOriginal.match(/\b(\d)\s*P(?:TAS?|TS?|TA)?\.?\b/i);
   const occMatch = versionOriginal.match(
-    /\b0?(\d+)\s*(?:OC|OCU|OCUP|OCUP\.?|O\.?)\b/i
+    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/
   );
   return {
     doors: doorsMatch ? `${doorsMatch[1]}PUERTAS` : "",

@@ -433,7 +433,9 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   cleaned = cleaned
     .replace(/\bHB\b/g, "HATCHBACK")
     .replace(/\bTUR\b/g, "TURBO")
-    .replace(/\bCONV\b/g, "CONVERTIBLE");
+    .replace(/\bCONV\b/g, "CONVERTIBLE")
+    .replace(/\bGW\b/g, "WAGON")
+    .replace(/\bPICK\s*UP\b/g, "PICKUP");
 
   cleaned = cleaned
     .replace(/\b\d+\s*PUERTAS?\b/gi, " ")

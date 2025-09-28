@@ -681,7 +681,11 @@ function processAxaRecord(record) {
       }
       const next = (arr[idx + 1] || "").toUpperCase();
       const prev = (arr[idx - 1] || "").toUpperCase();
-      if (/^\d+OCUP$/i.test(next) || NUMERIC_CONTEXT_TOKENS.has(next) || NUMERIC_CONTEXT_TOKENS.has(prev)) {
+      if (
+        /^\d+OCUP$/i.test(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(prev)
+      ) {
         return;
       }
       sanitizedTokens.push(token);

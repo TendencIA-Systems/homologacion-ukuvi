@@ -36,6 +36,9 @@ const ZURICH_NORMALIZATION_DICTIONARY = {
     "T.S",
     "T.P.",
     "FBX",
+    "DH",
+    "C",
+    "FBX",
     // indicadores de transmisión (para limpiar la versión)
     "STD",
     "AUT",
@@ -213,37 +216,31 @@ function normalizeTurboTokens(text = "") {
     return match;
   });
 
-  const applyTurboReplacement = (fullMatch, rawNumber, hasL, offset) => {
-    const formatted = formatTurboDisplacement(rawNumber);
-    if (!formatted) return fullMatch;
+  return text.replace(
+    /\b(\d+(?:\.\d+)?)(L)?[\s-]*T\b/gi,
+    (fullMatch, rawNumber, hasL, offset) => {
+      const formatted = formatTurboDisplacement(rawNumber);
+      if (!formatted) return fullMatch;
 
-    const matchEnd = offset + fullMatch.length;
-    const hasOtherLiters = explicitLiters.some(
-      ({ token, offset: literOffset }) => {
-        const literEnd = literOffset + token.length;
-        return literOffset < offset || literOffset >= matchEnd;
+      const matchEnd = offset + fullMatch.length;
+      const hasOtherLiters = explicitLiters.some(
+        ({ token, offset: literOffset }) => {
+          const literEnd = literOffset + token.length;
+          return literOffset < offset || literOffset >= matchEnd;
+        }
+      );
+
+      if (hasL) {
+        return `${formatted}L TURBO`;
       }
-    );
 
-    if (hasL) {
+      if (hasOtherLiters) {
+        return `${formatted} TURBO`;
+      }
+
       return `${formatted}L TURBO`;
     }
-
-    if (hasOtherLiters) {
-      return `${formatted} TURBO`;
-    }
-
-    return `${formatted}L TURBO`;
-  };
-
-  let output = text.replace(/\b(\d+(?:\.\d+)?)(L)?[\s-]*T\b/gi, applyTurboReplacement);
-  output = output.replace(
-    /(\d+(?:\.\d+)?)(L)?(?:\s|-)?(TFSI|TSI)\b/gi,
-    (fullMatch, rawNumber, hasL, _alias, offset) =>
-      applyTurboReplacement(fullMatch, rawNumber, hasL, offset)
   );
-
-  return output;
 }
 function normalizeCylinders(text = "") {
   return text;
@@ -277,6 +274,9 @@ function cleanVersionString(versionString, model = "") {
     .replace(/\bHB\b/g, "HATCHBACK")
     .replace(/\bTUR\b/g, "TURBO")
     .replace(/\bCONV\b/g, "CONVERTIBLE")
+    .replace(/\bGW\b/g, "WAGON")
+    .replace(/\bV8\b/g, "8CIL")
+    .replace(/\bPICK\s*UP\b/g, "PICKUP")
     .replace(/(?<!\d)[\.,]|[\.,](?!\d)/g, " ");
 
   Object.values(ZURICH_NORMALIZATION_DICTIONARY.regex_patterns).forEach(
@@ -307,7 +307,9 @@ function extractDoorsAndOccupants(versionOriginal = "") {
   const doorsMatch = versionOriginal.match(
     /\b(\d)\s*P(?:TAS|TA|TS)?\.?(?=\b)/i
   );
-  const occMatch = versionOriginal.match(/\b0?(\d+)\s*OCUP?\.?\b/i);
+  const occMatch = versionOriginal.match(
+    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/
+  );
   return {
     doors: doorsMatch ? `${doorsMatch[1]}PUERTAS` : "",
     occupants: occMatch ? `${parseInt(occMatch[1], 10)}OCUP` : "",

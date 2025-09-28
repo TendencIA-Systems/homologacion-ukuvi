@@ -565,6 +565,8 @@ function cleanVersionString(versionString = "", brand = "", model = "") {
     "$1 $2"
   );
   cleaned = cleaned.replace(/\bHB\b/g, "HATCHBACK");
+  cleaned = cleaned.replace(/\bSW\b/g, "WAGON");
+  cleaned = cleaned.replace(/\bPICK\s*UP\b/g, "PICKUP");
   cleaned = cleaned.replace(/\b(V|L|R|H|I|B)\s+(\d{1,2})\b/g, "$1$2");
   cleaned = cleaned.replace(/\b(\d{1,2})\s+CIL\b/g, "$1CIL");
   cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s+L\b/g, "$1L");

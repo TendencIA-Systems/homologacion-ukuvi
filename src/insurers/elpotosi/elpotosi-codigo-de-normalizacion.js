@@ -1,162 +1,102 @@
 /**
- * El Potosi ETL - Normalization Code Node
+ * Chubb ETL - Normalization Code Node (updated: drop floating numbers used for doors)
  *
- * Aligns El Potosi records with the shared homologation contract.
- * - Canonicalizes AUTO/MANUAL transmissions and removes their aliases from version text.
- * - Normalizes drivetrain, engine specs, comfort tokens (COMFORT/CONFORT, etc.), and ton capacity strings.
- * - Preserves trim identifiers while cleaning door/occupant noise via numeric-context guards.
+ * Mirrors the insurer normalization pipeline used for Zurich/Qualitas/Atlas.
+ * Intended for execution inside an n8n Code node: it cleans Chubb vehicle
+ * records, infers transmissions when missing, extracts door/occupant tokens,
+ * and outputs normalized objects ready for Supabase ingestion.
  */
 
 const crypto = require("crypto");
 
-const BATCH_SIZE = 5000;
-
-const CANONICAL_TRANSMISSIONS = new Set(["AUTO", "MANUAL"]);
-
-const TRANSMISSION_DEFINITIONS = [
-  {
-    canonical: "MANUAL",
-    tokens: [
-      "MANUAL",
-      "MAN",
-      "MAN.",
-      "STD",
-      "STD.",
-      "TM",
-      "ESTANDAR",
-      "MECANICO",
-      "MECANICA",
-      "MECA",
-      "MECHANICO",
-      "SECUENCIAL",
-      "DRIVELOGIC",
-      "DUALOGIC",
-      "SMG",
-      "SEMI AUTOMATICO",
-      "SEMI AUTOMATICA",
-    ],
-  },
-  {
-    canonical: "AUTO",
-    tokens: [
-      "AUTO",
-      "AUT",
-      "AUT.",
-      "AT",
-      "AT.",
-      "AUTOMATICO",
-      "AUTOMATICA",
-      "AUTOMATIC",
-      "AUTOMATIZADO",
-      "AUTOMATIZADA",
-      "AUTOTRANS",
-      "AUTOM",
-      "CVT",
-      "E CVT",
-      "E-CVT",
-      "ECVT",
-      "IVT",
-      "I CVT",
-      "DSG",
-      "DCT",
-      "TIPTRONIC",
-      "TIPTRNIC",
-      "STEPTRONIC",
-      "GEARTRONIC",
-      "MULTITRONIC",
-      "S TRONIC",
-      "S-TRONIC",
-      "STRONIC",
-      "S.TRONIC",
-      "Q TRONIC",
-      "Q-TRONIC",
-      "TOUCHTRONIC",
-      "TOUCHTRONIC3",
-      "POWERSHIFT",
-      "PDK",
-      "SPORTSHIFT",
-      "SELESPEED",
-      "SALESPEED",
-      "SPEEDSHIFT",
-      "TORQUEFLITE",
-      "DUAL CLUTCH",
-      "DUAL-CLUTCH",
-      "HYDROMATIC",
-      "XTRONIC",
-      "X-TRONIC",
-      "X TRONIC",
-      "MULTIDRIVE",
-    ],
-  },
-];
-
-const ELPOTOSI_NORMALIZATION_DICTIONARY = {
+const CHUBB_NORMALIZATION_DICTIONARY = {
   irrelevant_comfort_audio: [
-    "ABS",
-    "CA",
-    "CE",
-    "CD",
-    "CB",
-    "CQ",
-    "SQ",
-    "EQ",
-    "A/A",
-    "E/E",
-    "A A",
-    "E E",
     "AA",
     "EE",
-    "B/A",
-    "B A",
-    "Q/C",
-    "Q C",
-    "QC",
-    "BA",
-    "PIEL",
-    "TELA",
-    "VINIL",
-    "ALUMINIO",
-    "ALARM",
-    "ALARMA",
-    "RADIO",
-    "STEREO",
-    "MP3",
+    "CD",
     "DVD",
     "GPS",
     "BT",
     "USB",
-    "NAV",
+    "MP3",
+    "AM",
+    "RA",
+    "FX",
+    "BOSE",
+    "BA",
+    "ABS",
+    "IEC",
+    "QC",
+    "Q/C",
+    "Q.C.",
+    "VP",
+    "V/P",
+    "OC",
+    "PIEL",
+    "GAMUZA",
+    "CA",
+    "CE",
+    "SQ",
+    "CB",
+    "SIS/NAV",
+    "SIS.NAV.",
+    "T.S",
+    "T.P.",
+    "FBX",
+    "IMO",
+    "CQ",
+    "TELA",
+    "CT",
+    "IEM",
+    "SMP",
+    "SM",
+    "IPC",
+    "HDS",
     "NAVI",
-    "CAM",
-    "CAMARA",
     "CAM TRAS",
     "SENSOR",
-    "SENSORES",
-    "PARK",
-    "PARKTRONIC",
-    "CLIMA",
-    "CLIMATRONIC",
-    "D/T",
-    "D T",
-    "D/V",
-    "D V",
-    "DIS",
-    "PADDLE",
-    "KEYLESS",
-    "PUSH",
-    "START",
-    "BOTON",
-    "ENCENDIDO",
-    "PREMIUM SOUND",
-    "COMFORT",
-    "CONFORT",
+    "CAMARA",
+    "IMP",
+    "ISM",
+    "BTU",
+    "TBO",
+    "STD",
+    "STD.",
+    "AUT",
+    "AUT.",
+    "CVT",
+    "DSG",
+    "S TRONIC",
+    "S-TRONIC",
+    "TIPTRONIC",
+    "TIPTRNIC",
+    "SELESPEED",
+    "SALESPEED",
+    "SPORTSHIFT",
+    "TOUCHTRONIC3",
+    "Q-TRONIC",
+    "DCT",
+    "MULTITRONIC",
+    "STEPTRONIC",
+    "GEARTRONIC",
+    "STRONIC",
+    "SECUENCIAL",
+    "DRIVELOGIC",
+    "DUALOGIC",
+    "SPEEDSHIFT",
+    "G-TRONIC",
+    "G TRONIC",
+    "PDK",
+    "MULTITRO",
+    "AUTOMATICA",
+    "AUTOMATICO",
+    "AUTOMATIC",
   ],
   cylinder_normalization: {
     L3: "3CIL",
     L4: "4CIL",
     L5: "5CIL",
     L6: "6CIL",
-    L8: "8CIL",
     V6: "6CIL",
     V8: "8CIL",
     V10: "10CIL",
@@ -170,170 +110,130 @@ const ELPOTOSI_NORMALIZATION_DICTIONARY = {
     I6: "6CIL",
     R3: "3CIL",
     R4: "4CIL",
-    R5: "5CIL",
     R6: "6CIL",
     B4: "4CIL",
     B6: "6CIL",
   },
+  transmission_normalization: {
+    STD: "MANUAL",
+    "STD.": "MANUAL",
+    MANUAL: "MANUAL",
+    MAN: "MANUAL",
+    "MAN.": "MANUAL",
+    "M/T": "MANUAL",
+    MT: "MANUAL",
+    SECUENCIAL: "MANUAL",
+    DRIVELOGIC: "MANUAL",
+    DUALOGIC: "MANUAL",
+    TM: "MANUAL",
+    ESTANDAR: "MANUAL",
+    MEC: "MANUAL",
+    MECANICA: "MANUAL",
+    AUT: "AUTO",
+    "AUT.": "AUTO",
+    AUTO: "AUTO",
+    "A/T": "AUTO",
+    AT: "AUTO",
+    TA: "AUTO",
+    AUTOMATICA: "AUTO",
+    AUTOMATICO: "AUTO",
+    AUTOMATIC: "AUTO",
+    CVT: "AUTO",
+    CVT7: "AUTO",
+    DSG: "AUTO",
+    "S TRONIC": "AUTO",
+    "S-TRONIC": "AUTO",
+    STRONIC: "AUTO",
+    TIPTRONIC: "AUTO",
+    TIPTRNIC: "AUTO",
+    SELESPEED: "AUTO",
+    SALESPEED: "AUTO",
+    SPORTSHIFT: "AUTO",
+    TOUCHTRONIC3: "AUTO",
+    "Q-TRONIC": "AUTO",
+    DCT: "AUTO",
+    MULTITRONIC: "AUTO",
+    STEPTRONIC: "AUTO",
+    GEARTRONIC: "AUTO",
+    SPEEDSHIFT: "AUTO",
+    "G-TRONIC": "AUTO",
+    "G TRONIC": "AUTO",
+    PDK: "AUTO",
+    MULTITRO: "AUTO",
+  },
   regex_patterns: {
-    decimal_comma: /(\d),(\d)/g,
+    year_codes: /\b(20\d{2})\b/g,
     multiple_spaces: /\s+/g,
     trim_spaces: /^\s+|\s+$/g,
-    stray_punctuation: /(?<!\d)[\.,;]|[\.,;](?!\d)/g,
   },
 };
 
-const PROTECTED_HYPHEN_TOKENS = [
-  {
-    regex: /\bA[\s-]?SPEC\b/gi,
-    placeholder: "__EP_PROTECTED_A_SPEC__",
-    canonical: "A-SPEC",
-  },
-  {
-    regex: /\bTYPE[\s-]?S\b/gi,
-    placeholder: "__EP_PROTECTED_TYPE_S__",
-    canonical: "TYPE-S",
-  },
-  {
-    regex: /\bTYPE[\s-]?R\b/gi,
-    placeholder: "__EP_PROTECTED_TYPE_R__",
-    canonical: "TYPE-R",
-  },
-  {
-    regex: /\bTYPE[\s-]?F\b/gi,
-    placeholder: "__EP_PROTECTED_TYPE_F__",
-    canonical: "TYPE-F",
-  },
-  {
-    regex: /\bS[\s-]?LINE\b/gi,
-    placeholder: "__EP_PROTECTED_S_LINE__",
-    canonical: "S-LINE",
-  },
-];
+const INVALID_TRANSMISSION_CODES = new Set([
+  "",
+  "-",
+  "NA",
+  "N/A",
+  "S/D",
+  "SD",
+  "SIN DATO",
+  "SIN INFORMACION",
+  "SIN INFORMACI�N",
+  "NO APLICA",
+  "NO APL",
+  "NO DEFINIDO",
+]);
 
+const NORMALIZED_TRANSMISSIONS = new Set(["AUTO", "MANUAL"]);
 const NUMERIC_CONTEXT_TOKENS = new Set([
+  "O",
+  "OC",
+  "OCU",
   "OCUP",
   "OCUPANTE",
   "OCUPANTES",
-  "OCUPACION",
   "PASAJEROS",
   "PASAJERO",
   "PAS",
   "PUERTAS",
   "PUERTA",
   "PAX",
-  "TON",
-  "TONELADAS",
-  "TONS",
 ]);
 
-const RESIDUAL_SINGLE_TOKENS = new Set(["A", "B", "C", "E", "Q"]);
+const PROTECTED_HYPHEN_TOKENS = [
+  {
+    regex: /\bA[\s-]?SPEC\b/gi,
+    placeholder: "__PROTECTED_A_SPEC__",
+    canonical: "A-SPEC",
+  },
+  {
+    regex: /\bTYPE[\s-]?S\b/gi,
+    placeholder: "__PROTECTED_TYPE_S__",
+    canonical: "TYPE-S",
+  },
+  {
+    regex: /\bTYPE[\s-]?R\b/gi,
+    placeholder: "__PROTECTED_TYPE_R__",
+    canonical: "TYPE-R",
+  },
+  {
+    regex: /\bTYPE[\s-]?F\b/gi,
+    placeholder: "__PROTECTED_TYPE_F__",
+    canonical: "TYPE-F",
+  },
+  {
+    regex: /\bS[\s-]?LINE\b/gi,
+    placeholder: "__PROTECTED_S_LINE__",
+    canonical: "S-LINE",
+  },
+];
 
 const ENGINE_ALIAS_PATTERNS = [
   { regex: /\bT[\s-]?FSI\b/gi, replacement: "TURBO" },
   { regex: /\bT[\s-]?SI\b/gi, replacement: "TURBO" },
   { regex: /\bFSI\s*TURBO\b/gi, replacement: "TURBO" },
-  { regex: /\bECOBOOST\b/gi, replacement: "TURBO" },
-  { regex: /\bT[\s-]?JET\b/gi, replacement: "TURBO" },
-  { regex: /\bBI[\s-]?TURBO\b/gi, replacement: "BITURBO" },
-  { regex: /\bTURBO DIESEL\b/gi, replacement: "DIESEL_TURBO" },
-  { regex: /\bDIESEL TURBO\b/gi, replacement: "DIESEL_TURBO" },
-  { regex: /\bTDI\b/gi, replacement: "DIESEL_TURBO" },
-  { regex: /\bCDI\b/gi, replacement: "DIESEL_TURBO" },
-  { regex: /\bTDCI\b/gi, replacement: "DIESEL_TURBO" },
-  { regex: /\bHDI\b/gi, replacement: "DIESEL_TURBO" },
-  { regex: /\bBLUETEC\b/gi, replacement: "DIESEL_TURBO" },
-  { regex: /\bHEMI\b/gi, replacement: "HEMI" },
+  { regex: /\bFSI\b/gi, replacement: "FSI" },
+  { regex: /\bGDI\b/gi, replacement: "GDI" },
 ];
-
-function escapeRegExp(value = "") {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function sanitizeTransmissionToken(value = "") {
-  return value
-    .toString()
-    .toUpperCase()
-    .replace(/[^\w\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function generateTransmissionTokenVariants(token = "") {
-  const variants = new Set();
-  const upper = token.toString().toUpperCase();
-  variants.add(upper);
-  variants.add(upper.replace(/-/g, " "));
-  variants.add(upper.replace(/\./g, ""));
-  variants.add(upper.replace(/[.\-]/g, " "));
-  variants.add(upper.replace(/\s+/g, " ").trim());
-  variants.add(upper.replace(/\s+/g, ""));
-  const sanitized = sanitizeTransmissionToken(token);
-  if (sanitized) {
-    variants.add(sanitized);
-    variants.add(sanitized.replace(/\s+/g, ""));
-  }
-  return Array.from(variants)
-    .map((variant) => variant.trim())
-    .filter(Boolean);
-}
-
-const TRANSMISSION_TOKEN_MAP = new Map();
-const TRANSMISSION_SEARCH_PATTERNS = [];
-const TRANSMISSION_TOKEN_VARIANTS = new Set();
-
-TRANSMISSION_DEFINITIONS.forEach(({ canonical, tokens }) => {
-  const variantSet = new Set();
-  tokens.forEach((token) => {
-    const normalizedToken = sanitizeTransmissionToken(token);
-    if (normalizedToken && !TRANSMISSION_TOKEN_MAP.has(normalizedToken)) {
-      TRANSMISSION_TOKEN_MAP.set(normalizedToken, canonical);
-    }
-    generateTransmissionTokenVariants(token).forEach((variant) => {
-      variantSet.add(variant);
-      TRANSMISSION_TOKEN_VARIANTS.add(variant);
-    });
-  });
-  TRANSMISSION_SEARCH_PATTERNS.push({
-    canonical,
-    patterns: Array.from(variantSet)
-      .map((variant) => {
-        const trimmed = variant.trim();
-        if (!trimmed) return null;
-        const useWordBoundary = /^[A-Z0-9 ]+$/.test(trimmed);
-        const source = useWordBoundary
-          ? `\\b${escapeRegExp(trimmed)}\\b`
-          : escapeRegExp(trimmed);
-        return new RegExp(source, "i");
-      })
-      .filter(Boolean),
-  });
-});
-
-ELPOTOSI_NORMALIZATION_DICTIONARY.transmission_tokens = Array.from(
-  new Set(
-    Array.from(TRANSMISSION_TOKEN_VARIANTS)
-      .flatMap((token) => {
-        const spaced = token.toUpperCase().replace(/\s+/g, " ").trim();
-        const compact = spaced.replace(/\s+/g, "");
-        return [spaced, compact];
-      })
-      .filter(Boolean)
-  )
-);
-
-ELPOTOSI_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio = Array.from(
-  new Set(
-    ELPOTOSI_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.map((token) =>
-      token
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .toUpperCase()
-        .replace(/\s+/g, " ")
-        .trim()
-    )
-  )
-);
 
 function applyProtectedTokens(value = "") {
   let output = value;
@@ -352,51 +252,26 @@ function restoreProtectedTokens(value = "") {
   return output;
 }
 
-function stripTokens(text = "", tokens = []) {
-  if (!text || typeof text !== "string") return "";
-  let output = text;
-  tokens.forEach((token) => {
-    const trimmed = token.trim();
-    if (!trimmed) return;
-    const useWordBoundary = /^[A-Z0-9 ]+$/.test(trimmed);
-    const pattern = useWordBoundary
-      ? new RegExp(`\\b${escapeRegExp(trimmed)}\\b`, "gi")
-      : new RegExp(escapeRegExp(trimmed), "gi");
-    output = output.replace(pattern, " ");
-  });
-  return output;
-}
-
-function normalizeDrivetrain(value = "") {
+function normalizeStandaloneLiters(value = "") {
   if (!value || typeof value !== "string") return "";
   return value
-    .replace(/\bALL[-\s]?WHEEL DRIVE\b/g, "AWD")
-    .replace(/\b4MATIC\b/g, "AWD")
-    .replace(/\bQUATTRO\b/g, "AWD")
-    .replace(/\bTRACCION\s+TOTAL\b/g, "AWD")
-    .replace(/\bAWD\b/g, "AWD")
-    .replace(/\b4\s*X\s*4\b/g, "4WD")
-    .replace(/\b4\s*WD\b/g, "4WD")
-    .replace(/\b4\s*WHEEL DRIVE\b/g, "4WD")
-    .replace(/\bTRACCION\s+4X4\b/g, "4WD")
-    .replace(/\bFRONT[-\s]?WHEEL DRIVE\b/g, "FWD")
-    .replace(/\bTRACCION\s+DELANTERA\b/g, "FWD")
-    .replace(/\bFWD\b/g, "FWD")
-    .replace(/\bREAR[-\s]?WHEEL DRIVE\b/g, "RWD")
-    .replace(/\bTRACCION\s+TRASERA\b/g, "RWD")
-    .replace(/\b4\s*X\s*2\b/g, "RWD")
-    .replace(/\b2WD\b/g, "RWD")
-    .replace(/\bRWD\b/g, "RWD");
+    .replace(/\b(\d+\.\d+)\s+L\b/g, "$1L")
+    .replace(
+      /\b(\d+\.\d+)(?=\s|$)(?!\s*(?:L\b|\d|TURBO\b|BITURBO\b|SUPERCHARGED\b|SUPERCARGADO\b))/g,
+      (match) => {
+        const liters = parseFloat(match);
+        if (!Number.isFinite(liters) || liters <= 0 || liters > 12)
+          return match;
+        return `${match}L`;
+      }
+    );
 }
 
-function normalizeCylinders(value = "") {
+function applyEngineAliases(value = "") {
   if (!value || typeof value !== "string") return "";
   let output = value;
-  Object.entries(
-    ELPOTOSI_NORMALIZATION_DICTIONARY.cylinder_normalization
-  ).forEach(([from, to]) => {
-    const pattern = new RegExp(`\\b${escapeRegExp(from)}\\b`, "gi");
-    output = output.replace(pattern, to);
+  ENGINE_ALIAS_PATTERNS.forEach(({ regex, replacement }) => {
+    output = output.replace(regex, replacement);
   });
   return output;
 }
@@ -410,29 +285,6 @@ function normalizeEngineDisplacement(value = "") {
       const digits = match.match(/\d+/)[0];
       return `${digits}.0L`;
     });
-}
-
-function normalizeStandaloneLiters(value = "") {
-  if (!value || typeof value !== "string") return "";
-  let output = value;
-  output = output.replace(
-    /\b(\d+(?:\.\d+)?)\s*(?:LTS?|LITROS?)\b/gi,
-    (_, liters) => `${liters}L`
-  );
-  output = output.replace(
-    /\b(\d+\.\d+)\b(?!\s*(?:L|LTS?|LITROS?|TON|TONELADAS?|TONS?|OCUP|CIL|HP|K?G))/gi,
-    (_, liters) => `${liters}L`
-  );
-  return output;
-}
-
-function normalizeHorsepower(value = "") {
-  if (!value || typeof value !== "string") return "";
-  return value
-    .replace(/\b(\d+)\s*C\.P\.?\b/gi, "$1HP")
-    .replace(/\b(\d+)\s*CP\b/gi, "$1HP")
-    .replace(/\b(\d+)\s*H\.P\.?\b/gi, "$1HP")
-    .replace(/\b(\d+)\s*HP\b/gi, "$1HP");
 }
 
 function formatTurboDisplacement(raw = "") {
@@ -467,9 +319,11 @@ function normalizeTurboTokens(value = "") {
     if (hasL) {
       return `${formatted}L TURBO`;
     }
+
     if (hasOtherLiters) {
       return `${formatted} TURBO`;
     }
+
     return `${formatted}L TURBO`;
   };
 
@@ -483,112 +337,108 @@ function normalizeTurboTokens(value = "") {
       applyTurboReplacement(fullMatch, rawNumber, hasL, offset)
   );
 
-  output = output
-    .replace(/\bTBO\b/gi, "TURBO")
-    .replace(/\bBI[\s-]?TURBO\b/gi, "BITURBO")
-    .replace(/\bTWIN[\s-]?TURBO\b/gi, "TWIN TURBO")
-    .replace(/\bT\/T\b/gi, "TWIN TURBO");
-
   return output;
 }
 
-function applyEngineAliases(value = "") {
+function normalizeCylinders(value = "") {
   if (!value || typeof value !== "string") return "";
-  let output = value;
-  ENGINE_ALIAS_PATTERNS.forEach(({ regex, replacement }) => {
-    output = output.replace(regex, replacement);
-  });
-  return output;
-}
-
-function normalizeTonCapacity(value = "") {
-  if (!value || typeof value !== "string") return "";
-  return value.replace(
-    /\b(\d+(?:\.\d+)?)\s*TON(?:ELADAS|S)?\b/gi,
-    (_, ton) => `${ton}TON`
+  let normalized = value;
+  Object.entries(CHUBB_NORMALIZATION_DICTIONARY.cylinder_normalization).forEach(
+    ([from, to]) => {
+      const spacedPattern = new RegExp(
+        `\\b${escapeRegex(from)}\\s*(?=\\d+\\.?\\d*|\\s|$)`,
+        "gi"
+      );
+      normalized = normalized.replace(spacedPattern, to);
+      const exactPattern = new RegExp(`\\b${escapeRegex(from)}\\b`, "gi");
+      normalized = normalized.replace(exactPattern, to);
+    }
   );
+  return normalized;
 }
 
-function cleanVersionString(versionString = "", brand = "", model = "") {
+function normalizeDrivetrain(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value
+    .replace(/\bALL[-\s]?WHEEL DRIVE\b/g, "AWD")
+    .replace(/\b4MATIC\b/g, "AWD")
+    .replace(/\bQUATTRO\b/g, "AWD")
+    .replace(/\bTRACCION\s+TOTAL\b/g, "AWD")
+    .replace(/\bAWD\b/g, "AWD")
+    .replace(/\b4\s*X\s*4\b/g, "4WD")
+    .replace(/\b4\s*WD\b/g, "4WD")
+    .replace(/\b4\s*WHEEL DRIVE\b/g, "4WD")
+    .replace(/\bTRACCION\s+4X4\b/g, "4WD")
+    .replace(/\bFRONT[-\s]?WHEEL DRIVE\b/g, "FWD")
+    .replace(/\bTRACCION\s+DELANTERA\b/g, "FWD")
+    .replace(/\bFWD\b/g, "FWD")
+    .replace(/\bREAR[-\s]?WHEEL DRIVE\b/g, "RWD")
+    .replace(/\bTRACCION\s+TRASERA\b/g, "RWD")
+    .replace(/\b4\s*X\s*2\b/g, "RWD")
+    .replace(/\b2WD\b/g, "RWD")
+    .replace(/\bRWD\b/g, "RWD");
+}
+
+function cleanVersionString(versionString = "", model = "", marca = "") {
   if (!versionString || typeof versionString !== "string") return "";
 
-  let cleaned = versionString
-    .toString()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/"/g, " ")
-    .trim();
-
+  let cleaned = versionString.toUpperCase().trim();
   cleaned = applyProtectedTokens(cleaned);
-  cleaned = cleaned.replace(
-    ELPOTOSI_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
-    "$1.$2"
-  );
-  cleaned = cleaned.replace(/[\\/]/g, " ");
-  cleaned = cleaned.replace(/\s*&\s*/g, " ");
+  cleaned = cleaned.replace(/\bRA-?(\d+)\b/g, "R$1");
+  cleaned = cleaned.replace(/[\/,]/g, " ");
   cleaned = cleaned.replace(/-/g, " ");
-  cleaned = cleaned.replace(/PICK[\s-]?UP/g, "PICKUP");
-  cleaned = cleaned.replace(/\bHB\b/g, "HATCHBACK");
 
   cleaned = normalizeDrivetrain(cleaned);
   cleaned = normalizeTurboTokens(cleaned);
   cleaned = applyEngineAliases(cleaned);
   cleaned = normalizeCylinders(cleaned);
-  cleaned = normalizeTonCapacity(cleaned);
   cleaned = normalizeEngineDisplacement(cleaned);
   cleaned = normalizeStandaloneLiters(cleaned);
-  cleaned = normalizeHorsepower(cleaned);
 
-  cleaned = stripTokens(
-    cleaned,
-    ELPOTOSI_NORMALIZATION_DICTIONARY.transmission_tokens
-  );
-  cleaned = stripTokens(
-    cleaned,
-    ELPOTOSI_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio
-  );
-
-  if (brand) {
-    const normalizedBrand = normalizeText(brand);
-    if (normalizedBrand) {
-      const variants = [
-        normalizedBrand,
-        normalizedBrand.replace(/\s+/g, ""),
-        normalizedBrand.split(" ")[0],
-      ].filter(Boolean);
-      variants.forEach((variant) => {
-        cleaned = cleaned.replace(
-          new RegExp(`\\b${escapeRegExp(variant)}\\b`, "gi"),
-          " "
-        );
-      });
-    }
-  }
+  CHUBB_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.forEach((token) => {
+    const regex = new RegExp(`\\b${escapeRegex(token)}\\b`, "gi");
+    cleaned = cleaned.replace(regex, " ");
+  });
 
   if (model) {
-    const normalizedModel = normalizeText(model);
-    if (normalizedModel) {
-      cleaned = cleaned.replace(
-        new RegExp(`\\b${escapeRegExp(normalizedModel)}\\b`, "gi"),
-        " "
-      );
-    }
+    cleaned = cleaned.replace(
+      new RegExp(`\\b${escapeRegex(model.toUpperCase())}\\b`, "gi"),
+      " "
+    );
   }
 
-  cleaned = cleaned.replace(
-    ELPOTOSI_NORMALIZATION_DICTIONARY.regex_patterns.stray_punctuation,
-    " "
-  );
+  if (marca) {
+    cleaned = cleaned.replace(
+      new RegExp(`\\b${escapeRegex(marca.toUpperCase())}\\b`, "gi"),
+      " "
+    );
+  }
+
+  cleaned = cleaned
+    .replace(/\bHB\b/g, "HATCHBACK")
+    .replace(/\bTUR\b/g, "TURBO")
+    .replace(/\bCONV\b/g, "CONVERTIBLE")
+    .replace(/\bPICK\s*UP\b/g, "PICKUP");
+
+  cleaned = cleaned
+    .replace(/\b\d+\s*PUERTAS?\b/gi, " ")
+    .replace(/\bPUERTAS?\b/gi, " ")
+    .replace(/\b0?\d+\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX)\b/gi, " ")
+    .replace(/\b0?\d+\s*(?:PASAJEROS?|PAS)\b/gi, " ");
+
+  const { year_codes, multiple_spaces, trim_spaces } =
+    CHUBB_NORMALIZATION_DICTIONARY.regex_patterns;
+  cleaned = cleaned.replace(year_codes, " ");
+  cleaned = cleaned.replace(/(?<!\d)[.,](?!\d)/g, " ");
+  cleaned = cleaned.replace(/\bL\b/g, " ");
+
+  cleaned = cleaned.replace(multiple_spaces, " ");
+  cleaned = cleaned.replace(trim_spaces, "");
+
   cleaned = restoreProtectedTokens(cleaned);
-  cleaned = cleaned.replace(
-    ELPOTOSI_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
-    " "
-  );
-  cleaned = cleaned.replace(
-    ELPOTOSI_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces,
-    ""
-  );
+  cleaned = cleaned.replace(/CIL(?=\d)/g, "CIL ");
+  cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s*HP\b/g, "$1HP");
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
 
   return cleaned;
 }
@@ -598,62 +448,68 @@ function extractDoorsAndOccupants(versionOriginal = "") {
     return { doors: "", occupants: "" };
   }
 
-  const normalized = versionOriginal
-    .toString()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/[-,/]/g, " ");
+  const normalizedOriginal = versionOriginal.toUpperCase();
+  const doorPatterns = [
+    /\b(\d+)\s*P(?:TAS?|TS?|TA)?\.?\b/,
+    /\b(\d+)\s*PUERTAS?\b/,
+    /\b(\d)\s*(?:ABS|D\/T)\b/,
+  ];
 
-  const doorsMatch = normalized.match(
-    /\b(\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/
-  );
-  const occMatch = normalized.match(
-    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/
-  );
+  let doors = "";
+  for (const pattern of doorPatterns) {
+    const match = normalizedOriginal.match(pattern);
+    if (match) {
+      const value = parseInt(match[1], 10);
+      if (Number.isFinite(value) && value > 0) {
+        doors = `${value}PUERTAS`;
+        break;
+      }
+    }
+  }
 
-  return {
-    doors: doorsMatch ? `${parseInt(doorsMatch[1], 10)}PUERTAS` : "",
-    occupants: occMatch ? `${parseInt(occMatch[1], 10)}OCUP` : "",
-  };
+  const occupantPatterns = [
+    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX)\b/,
+    /\b0?(\d+)(?:OCUPANTES?|OCUP|OCU|OC)\b/,
+    /\b0?(\d+)\s*(?:PASAJEROS?|PAS)\b/,
+  ];
+
+  let occupants = "";
+  for (const pattern of occupantPatterns) {
+    const match = normalizedOriginal.match(pattern);
+    if (match) {
+      const value = parseInt(match[1], 10);
+      if (Number.isFinite(value) && value > 0) {
+        occupants = `${value}OCUP`;
+        break;
+      }
+    }
+  }
+
+  return { doors, occupants };
 }
 
-function normalizeTransmission(value) {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "number") {
-    if (value === 1) return "MANUAL";
-    if (value === 2) return "AUTO";
-    return "";
-  }
-  const asString = value.toString().trim();
-  if (!asString) return "";
-  if (/^[12]$/.test(asString)) {
-    return asString === "1" ? "MANUAL" : "AUTO";
-  }
-  const normalizedToken = sanitizeTransmissionToken(asString);
-  if (!normalizedToken) return "";
-  if (CANONICAL_TRANSMISSIONS.has(normalizedToken)) {
-    return normalizedToken;
-  }
-  if (TRANSMISSION_TOKEN_MAP.has(normalizedToken)) {
-    return TRANSMISSION_TOKEN_MAP.get(normalizedToken);
-  }
+function normalizeTransmission(code) {
+  if (!code || typeof code !== "string") return "";
+  const normalized = code.toUpperCase().trim();
+  if (!normalized || INVALID_TRANSMISSION_CODES.has(normalized)) return "";
+  if (/^\d+$/.test(normalized)) return "";
+  const mapped =
+    CHUBB_NORMALIZATION_DICTIONARY.transmission_normalization[normalized] ||
+    normalized;
+  if (NORMALIZED_TRANSMISSIONS.has(mapped)) return mapped;
   return "";
 }
 
 function inferTransmissionFromVersion(versionOriginal = "") {
-  if (!versionOriginal) return "";
-  const normalizedVersion = versionOriginal
-    .toString()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/-/g, " ");
-  for (const { canonical, patterns } of TRANSMISSION_SEARCH_PATTERNS) {
-    for (const pattern of patterns) {
-      if (pattern.test(normalizedVersion)) {
-        return canonical;
-      }
+  if (!versionOriginal || typeof versionOriginal !== "string") return "";
+  const version = versionOriginal.toUpperCase();
+  for (const code of Object.keys(
+    CHUBB_NORMALIZATION_DICTIONARY.transmission_normalization
+  )) {
+    const regex = new RegExp(`\\b${escapeRegex(code)}\\b`, "i");
+    if (regex.test(version)) {
+      const normalized = normalizeTransmission(code);
+      if (normalized) return normalized;
     }
   }
   return "";
@@ -661,131 +517,108 @@ function inferTransmissionFromVersion(versionOriginal = "") {
 
 function dedupeTokens(tokens = []) {
   const seen = new Set();
-  const result = [];
+  const deduped = [];
   tokens.forEach((token) => {
-    const normalized = token.trim();
-    if (!normalized) return;
-    if (seen.has(normalized)) return;
-    seen.add(normalized);
-    result.push(normalized);
+    if (!token) return;
+    if (!seen.has(token)) {
+      seen.add(token);
+      deduped.push(token);
+    }
   });
-  return result;
+  return deduped;
 }
 
-function normalizeText(value) {
-  return value
-    ? value
-        .toString()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .trim()
-        .toUpperCase()
-    : "";
-}
+const BATCH_SIZE = 5000;
 
-function validateRecord(record) {
+function normalizeChubbData(records = []) {
+  const results = [];
   const errors = [];
-  const year = Number(record.anio);
 
-  if (!record.marca || record.marca.toString().trim() === "") {
-    errors.push("marca is required");
-  }
-  if (!record.modelo || record.modelo.toString().trim() === "") {
-    errors.push("modelo is required");
-  }
-  if (!Number.isInteger(year) || year < 2000 || year > 2030) {
-    errors.push("anio must be between 2000-2030");
-  } else {
-    record.anio = year;
-  }
-  if (
-    !record.version_original ||
-    record.version_original.toString().trim() === ""
-  ) {
-    errors.push("version is required");
-  }
-  const transmission = record.transmision
-    ? record.transmision.toString().trim().toUpperCase()
-    : "";
-  if (!CANONICAL_TRANSMISSIONS.has(transmission)) {
-    errors.push("transmision is required");
-  } else {
-    record.transmision = transmission;
+  for (let i = 0; i < records.length; i += BATCH_SIZE) {
+    const batch = records.slice(i, i + BATCH_SIZE);
+    for (const record of batch) {
+      try {
+        const processed = processChubbRecord(record);
+        results.push(processed);
+      } catch (error) {
+        errors.push({
+          error: true,
+          mensaje: error.message,
+          id_original: record.id_original,
+          codigo_error: categorizeError(error),
+          registro_original: record,
+          fecha_error: new Date().toISOString(),
+        });
+      }
+    }
   }
 
-  return { isValid: errors.length === 0, errors };
+  return { results, errors };
 }
 
-function categorizeError(error) {
-  const message = (error.message || "").toLowerCase();
-  if (message.includes("validation")) return "VALIDATION_ERROR";
-  if (message.includes("hash")) return "HASH_GENERATION_ERROR";
-  return "NORMALIZATION_ERROR";
+function normalizeChubbRecords(items = []) {
+  const rawRecords = items.map((item) =>
+    item && item.json ? item.json : item
+  );
+  const { results, errors } = normalizeChubbData(rawRecords);
+  const successItems = results.map((record) => ({ json: record }));
+  const errorItems = errors.map((error) => ({ json: error }));
+  return [...successItems, ...errorItems];
 }
 
-function createCommercialHash(vehicle) {
-  const key = [
-    vehicle.marca || "",
-    vehicle.modelo || "",
-    vehicle.anio ? vehicle.anio.toString() : "",
-    vehicle.transmision || "",
-  ]
-    .join("|")
-    .toLowerCase()
-    .trim();
-  return crypto.createHash("sha256").update(key).digest("hex");
-}
-
-function processElPotosiRecord(record) {
-  const versionOriginal = record.version_original
-    ? record.version_original.toString()
-    : "";
+function processChubbRecord(record) {
   const derivedTransmission =
     normalizeTransmission(record.transmision) ||
-    inferTransmissionFromVersion(versionOriginal);
-
+    inferTransmissionFromVersion(record.version_original);
   record.transmision = derivedTransmission;
 
-  const { doors, occupants } = extractDoorsAndOccupants(versionOriginal);
+  const { doors, occupants } = extractDoorsAndOccupants(
+    record.version_original || ""
+  );
 
-  const validation = validateRecord({
-    ...record,
-    transmision: record.transmision,
-  });
+  const validation = validateRecord(record);
   if (!validation.isValid) {
     throw new Error(`Validation failed: ${validation.errors.join(", ")}`);
   }
 
   let versionLimpia = cleanVersionString(
-    versionOriginal,
-    record.marca || "",
-    record.modelo || ""
+    record.version_original || "",
+    record.modelo || "",
+    record.marca || ""
   );
 
   versionLimpia = versionLimpia
-    .replace(/\b\d\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/gi, " ")
-    .replace(
-      /\b0?\d+\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/gi,
-      " "
-    )
+    .replace(/\b\d\s*P(?:TAS?|TS?|TA)?\.?\b/gi, " ")
+    .replace(/\b\d+\s*PUERTAS?\b/gi, " ")
+    .replace(/\b0?\d+\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX)\b/gi, " ")
+    .replace(/\b0?\d+\s*(?:PASAJEROS?|PAS)\b/gi, " ")
     .replace(/\s+[.,](?=\s|$)/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
+  // FIX: Never let a bare number linger if used for doors (or if it's context-free noise)
   const tokens = versionLimpia.split(" ").filter(Boolean);
-  const sanitizedTokens = [];
   let fallbackDoors = "";
+  const sanitizedTokens = [];
 
   tokens.forEach((token, idx, arr) => {
-    if (!token) return;
     if (/^[.,]$/.test(token)) return;
+
     if (/^\d+$/.test(token)) {
-      if (!doors && !fallbackDoors) {
-        const numericValue = parseInt(token, 10);
-        if (Number.isFinite(numericValue) && numericValue > 0) {
-          fallbackDoors = `${numericValue}PUERTAS`;
-        }
+      const numericValue = parseInt(token, 10);
+
+      // Use as fallback door count, but DO NOT keep the number token
+      if (
+        !doors &&
+        !fallbackDoors &&
+        Number.isFinite(numericValue) &&
+        numericValue > 0
+      ) {
+        fallbackDoors = `${numericValue}PUERTAS`;
+        return; // drop the floating number
       }
+
+      // If adjacent to numeric context (OCUP, PUERTAS, etc.), drop the bare number
       const next = (arr[idx + 1] || "").toUpperCase();
       const prev = (arr[idx - 1] || "").toUpperCase();
       if (
@@ -793,15 +626,13 @@ function processElPotosiRecord(record) {
         NUMERIC_CONTEXT_TOKENS.has(next) ||
         NUMERIC_CONTEXT_TOKENS.has(prev)
       ) {
-        return;
+        return; // part of a numeric phrase; we still don't keep the naked number
       }
-      sanitizedTokens.push(token);
+
+      // Any other bare number is noise — drop it
       return;
     }
-    const upperToken = token.toUpperCase();
-    if (upperToken.length === 1 && RESIDUAL_SINGLE_TOKENS.has(upperToken)) {
-      return;
-    }
+
     sanitizedTokens.push(token);
   });
 
@@ -817,23 +648,14 @@ function processElPotosiRecord(record) {
     .replace(/\s+/g, " ")
     .trim();
 
-  versionLimpia = versionLimpia.replace(
-    /\b(\d+\.\d+)\b(?!\s*(?:L|TON|OCUP|CIL|HP|K?G|TONS?))/g,
-    "$1L"
-  );
-
-  if (!versionLimpia) {
-    throw new Error("Normalization produced empty version_limpia");
-  }
-
   const normalized = {
-    origen_aseguradora: "ELPOTOSI",
+    origen_aseguradora: "CHUBB",
     id_original: record.id_original,
     marca: normalizeText(record.marca),
     modelo: normalizeText(record.modelo),
     anio: record.anio,
     transmision: record.transmision,
-    version_original: versionOriginal,
+    version_original: record.version_original,
     version_limpia: versionLimpia,
     fecha_procesamiento: new Date().toISOString(),
   };
@@ -842,36 +664,63 @@ function processElPotosiRecord(record) {
   return normalized;
 }
 
-function normalizeElPotosiData(records = []) {
-  const results = [];
+function createCommercialHash(vehicle) {
+  const key = [
+    vehicle.marca || "",
+    vehicle.modelo || "",
+    vehicle.anio ? vehicle.anio.toString() : "",
+    vehicle.transmision || "",
+  ]
+    .join("|")
+    .toLowerCase()
+    .trim();
+  return crypto.createHash("sha256").update(key).digest("hex");
+}
+
+function validateRecord(record) {
   const errors = [];
-  for (let i = 0; i < records.length; i += BATCH_SIZE) {
-    const batch = records.slice(i, i + BATCH_SIZE);
-    for (const record of batch) {
-      try {
-        results.push(processElPotosiRecord(record));
-      } catch (error) {
-        errors.push({
-          error: true,
-          mensaje: error.message,
-          id_original: record.id_original,
-          codigo_error: categorizeError(error),
-          registro_original: record,
-          fecha_error: new Date().toISOString(),
-        });
-      }
-    }
+
+  if (!record.marca || record.marca.toString().trim() === "") {
+    errors.push("marca is required");
   }
-  return { results, errors };
+  if (!record.modelo || record.modelo.toString().trim() === "") {
+    errors.push("modelo is required");
+  }
+  if (!record.anio || record.anio < 2000 || record.anio > 2030) {
+    errors.push("anio must be between 2000-2030");
+  }
+  if (
+    !record.version_original ||
+    record.version_original.toString().trim() === ""
+  ) {
+    errors.push("version is required");
+  }
+  const normalizedTransmission = record.transmision
+    ? record.transmision.toString().trim().toUpperCase()
+    : "";
+  if (!NORMALIZED_TRANSMISSIONS.has(normalizedTransmission)) {
+    errors.push("transmision is required");
+  } else {
+    record.transmision = normalizedTransmission;
+  }
+
+  return { isValid: errors.length === 0, errors };
 }
 
-function normalizeElPotosiRecords(items = []) {
-  const rawRecords = items.map((it) => (it && it.json ? it.json : it));
-  const { results, errors } = normalizeElPotosiData(rawRecords);
-  const successItems = results.map((record) => ({ json: record }));
-  const errorItems = errors.map((error) => ({ json: error }));
-  return [...successItems, ...errorItems];
+function normalizeText(value) {
+  return value ? value.toString().trim().toUpperCase() : "";
 }
 
-const outputItems = normalizeElPotosiRecords(items);
+function categorizeError(error) {
+  const message = error.message.toLowerCase();
+  if (message.includes("validation")) return "VALIDATION_ERROR";
+  if (message.includes("hash")) return "HASH_GENERATION_ERROR";
+  return "NORMALIZATION_ERROR";
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const outputItems = normalizeChubbRecords(items);
 return outputItems;
