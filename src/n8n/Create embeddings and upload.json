@@ -1,0 +1,171 @@
+{
+  "name": "Create embeddings and upload",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://zsyapaddgdrnqfdxxzjw.supabase.co/rest/v1/rpc/procesar_batch_vehiculos",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpzeWFwYWRkZ2RybnFmZHh4emp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzI5MTc5MiwiZXhwIjoyMDY4ODY3NzkyfQ.fxsYfEUkFGOP6dyrSxn2RYymcVWWQFi2te8nuJrIOyo"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpzeWFwYWRkZ2RybnFmZHh4emp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1MzI5MTc5MiwiZXhwIjoyMDY4ODY3NzkyfQ.fxsYfEUkFGOP6dyrSxn2RYymcVWWQFi2te8nuJrIOyo"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "params=single-object"
+            },
+            {
+              "name": "Content-Profile",
+              "value": "public"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -112,
+        768
+      ],
+      "id": "68a53c5b-92b9-4345-a3a0-d6445ba5c8d2",
+      "name": "Llamar Función Maestra",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 1500,
+      "notesInFlow": true,
+      "notes": "Procesa todo: busca, inserta o actualiza según corresponda"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f064b7e8-ae5e-404c-b41c-bafed7dfb7fd",
+              "name": "insertados",
+              "value": "={{ $('Llamar Función Maestra').all().json.insertados }}",
+              "type": "string"
+            },
+            {
+              "id": "59523ece-f34f-4562-a2a9-889a6ad859f2",
+              "name": "actualizados",
+              "value": "={{ $('Llamar Función Maestra').first().json.actualizados }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        112,
+        768
+      ],
+      "id": "d4ebd931-b978-4b4c-b1f4-8c61a5d99ed4",
+      "name": "Mensaje final"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://striped-stoat-944.convex.site/generate-embedding",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -368,
+        768
+      ],
+      "id": "f93f8b8c-4081-4b46-bc65-013d8edfc136",
+      "name": "HTTP Request1",
+      "retryOnFail": true,
+      "waitBetweenTries": 2000,
+      "maxTries": 4,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "954d04e6-42a7-4796-a1b1-43b52820f9aa",
+      "typeVersion": 1.1,
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "position": [
+        -576,
+        768
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Llamar Función Maestra": {
+      "main": [
+        [
+          {
+            "node": "Mensaje final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request1": {
+      "main": [
+        [
+          {
+            "node": "Llamar Función Maestra",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "43f44ce2-25f6-40eb-bb75-b6ee1bd0e1e1",
+  "meta": {
+    "instanceId": "900709ac205bf412bdd7b3d4452073dce9dfbb650e50cd24da57187d1da44e89"
+  },
+  "id": "1RxyxphVYWcKX4T0",
+  "tags": []
+}
