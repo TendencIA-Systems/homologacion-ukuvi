@@ -15,7 +15,10 @@ CREATE INDEX IF NOT EXISTS idx_catalogo_homologado_version_vector_ivfflat
   WITH (lists = 100);
 
 -- 4) Replace procesar_batch_vehiculos to persist embeddings and use cosine similarity fallback
-CREATE OR REPLACE FUNCTION public.procesar_batch_vehiculos(p_input jsonb)
+CREATE OR REPLACE FUNCTION public.procesar_batch_vehiculos(
+  p_input jsonb,
+  p_similarity_threshold numeric DEFAULT 0.96
+)
 RETURNS jsonb
 LANGUAGE plpgsql
 AS $$
@@ -37,7 +40,7 @@ DECLARE
   v_vec vector(1536);
   v_best_id bigint;
   v_best_sim numeric; -- cosine similarity in [0,1]
-  v_threshold numeric := 0.96; -- configurable as needed
+  v_threshold numeric := p_similarity_threshold; -- configurable as needed
 
   payload jsonb;
 BEGIN
@@ -184,18 +187,18 @@ BEGIN
           DO UPDATE SET
             disponibilidad = public.merge_disponibilidad(
               public.catalogo_homologado.disponibilidad,
-              EXCLUDED.disponibilidad ->> (SELECT key FROM jsonb_each_text(EXCLUDED.disponibilidad) LIMIT 1),
-              (SELECT value FROM jsonb_each(EXCLUDED.disponibilidad) LIMIT 1)
+              EXCLUDED.disponibilidad,
+              EXCLUDED.disponibilidad->>(EXCLUDED.disponibilidad->>'aseguradora')
             ),
             version_vector = COALESCE(public.catalogo_homologado.version_vector, EXCLUDED.version_vector),
-            fecha_actualizacion = v_now
-          RETURNING id
-          INTO v_best_id;
-
-          IF v_best_id IS NOT NULL THEN
-            v_ins_ids := v_ins_ids || ARRAY[v_best_id];
+            fecha_actualizacion = v_now;
+            fecha_actualizacion = v_now;
+            IF v_best_id IS NOT NULL THEN
+              v_ins_ids := v_ins_ids || ARRAY[v_best_id];
+            END IF;
           ELSE
-            v_nochange_ids := v_nochange_ids;
+            -- No change: optionally append v_rec.id_original if needed
+            -- v_nochange_ids := v_nochange_ids || ARRAY[v_rec.id_original];
           END IF;
         END IF;
       END IF;
