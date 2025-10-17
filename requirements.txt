@@ -1,0 +1,7 @@
+inngest[connect]>=0.5.0
+uvicorn[standard]>=0.30
+structlog
+asyncio
+protobuf>=5.29.4,<6.0.0
+psutil>=6.0.0,<7.0.0
+websockets>=15.0.0,<16.0.0
