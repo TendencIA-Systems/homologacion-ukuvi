@@ -153,6 +153,8 @@ const BX_NORMALIZATION_DICTIONARY = {
     "S/ROOF",
     "COMFORT",
     "CONFORT",
+    "RHYNE",
+    "RHYNE SIZE",
   ],
   cylinder_normalization: {
     L3: "3CIL",
@@ -231,6 +233,8 @@ const NUMERIC_CONTEXT_TOKENS = new Set([
   "PUERTA",
   "PAX",
 ]);
+
+const VALID_DOOR_COUNTS = new Set([2, 3, 4, 5, 7]);
 
 const RESIDUAL_SINGLE_TOKENS = new Set(["A", "B", "C", "E", "Q", "V", "P"]);
 
@@ -410,7 +414,7 @@ function normalizeCylinders(value = "") {
 function normalizeEngineDisplacement(value = "") {
   if (!value || typeof value !== "string") return "";
   return value
-    .replace(/\b(\d)(\d)L\b/g, "$1.$2L")
+    .replace(/\b(?<!\.)(\d)(\d)L\b/g, "$1.$2L")
     .replace(/\b(?<!\d\.)\d+L\b/g, (match) => `${match.slice(0, -1)}.0L`)
     .replace(/\b(?<!\d\.)\d+\s+L\b/g, (match) => {
       const digits = match.match(/\d+/)[0];
@@ -420,17 +424,53 @@ function normalizeEngineDisplacement(value = "") {
 
 function normalizeStandaloneLiters(value = "") {
   if (!value || typeof value !== "string") return "";
-  return value
-    .replace(/\b(\d+\.\d+)\s+L\b/g, "$1L")
-    .replace(
-      /\b(\d+\.\d+)(?=\s|$)(?!\s*(?:L\b|\d|TURBO\b|BITURBO\b|SUPERCHARGED\b|SUPERCARGADO\b))/g,
-      (match) => {
-        const liters = parseFloat(match);
-        if (!Number.isFinite(liters) || liters <= 0 || liters > 12)
-          return match;
-        return `${match}L`;
+
+  const collapsed = value.replace(/\b(\d+\.\d+)\s*L\b/gi, "$1L");
+
+  return collapsed.replace(
+    /\b(\d+\.\d+)(?=\s|$)(?!\s*(?:L\b|TON|TONELADAS|KG|KILOGRAMOS|PUERTAS|PTS?|OCUP|PASAJEROS?|PAS|HP\b|CIL|SERIE))/gi,
+    (match, _raw, offset, source) => {
+      const liters = parseFloat(match);
+      if (!Number.isFinite(liters) || liters < 0.5 || liters > 8) {
+        return match;
       }
-    );
+
+      const leadingChar = offset > 0 ? source[offset - 1] : "";
+      if (leadingChar && /[A-Za-z.]/.test(leadingChar)) {
+        return match;
+      }
+
+      const before = source
+        .substring(Math.max(0, offset - 20), offset)
+        .toUpperCase();
+      if (/(TON|TONELADAS|KG|KILOGRAMOS|PESO|CAB|CHASIS)/.test(before)) {
+        return match;
+      }
+
+      const after = source
+        .substring(offset + match.length, offset + match.length + 20)
+        .toUpperCase();
+      if (/(PUERTAS|PTS?|OCUP|PASAJEROS?|PAS|CIL|SERIE)/.test(after)) {
+        return match;
+      }
+
+      return `${match}L`;
+    }
+  );
+}
+
+function splitConcatenatedLiters(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value.replace(/(\d+(?:\.\d+)?L)(\d+(?:\.\d+)?L)/gi, "$1 $2");
+}
+
+function collapseDisplacementArtifacts(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value
+    .replace(/\b(\d+CIL)\.0(?:\.0L)?\b/g, "$1")
+    .replace(/\b(\d+CIL)\s+0\.0L\b/g, "$1")
+    .replace(/\b(\d+(?:\.\d+)?L)(?:\s*\1)+\b/g, "$1")
+    .replace(/\b(\d+(?:\.\d+)?L)L\b/g, "$1");
 }
 
 function normalizeHorsepower(value = "") {
@@ -526,6 +566,7 @@ function cleanVersionString(versionString = "", model = "", brand = "") {
     BX_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
     "$1.$2"
   );
+  cleaned = cleaned.replace(/AUT(?=[A-Z0-9])(?!O)/g, "AUT ");
   cleaned = cleaned.replace(/[\\/]/g, " ");
   cleaned = cleaned.replace(/\s*&\s*/g, " ");
   cleaned = cleaned.replace(/-/g, " ");
@@ -534,12 +575,29 @@ function cleanVersionString(versionString = "", model = "", brand = "") {
   cleaned = cleaned.replace(/\bGW\b/g, "WAGON");
   cleaned = cleaned.replace(/\bPICK\s*UP\b/g, "PICKUP");
 
+  // NEW: Remove NUEVO/NUEVA from version
+  cleaned = cleaned.replace(/\b(NUEVO|NUEVA|NEW)\s+/gi, "");
+
+  // NEW: Remove generation/trim prefixes (A7, MK VII, etc.)
+  cleaned = cleaned.replace(
+    /\b(A[4-7]|MK\s*VII?I?|MKVII?I?|GEN\s*\d+)\s+/gi,
+    ""
+  );
+
+  // NEW: Remove body types from version
+  cleaned = cleaned.replace(
+    /\b(SEDAN|HATCHBACK|SUV|COUPE|CONVERTIBLE|PICKUP|VAN|WAGON)\b/gi,
+    " "
+  );
+
   cleaned = normalizeDrivetrain(cleaned);
   cleaned = normalizeTurboTokens(cleaned);
   cleaned = applyEngineAliases(cleaned);
   cleaned = normalizeCylinders(cleaned);
   cleaned = normalizeEngineDisplacement(cleaned);
   cleaned = normalizeStandaloneLiters(cleaned);
+  cleaned = splitConcatenatedLiters(cleaned);
+  cleaned = collapseDisplacementArtifacts(cleaned);
   cleaned = normalizeHorsepower(cleaned);
 
   cleaned = stripTokens(
@@ -550,6 +608,12 @@ function cleanVersionString(versionString = "", model = "", brand = "") {
     cleaned,
     BX_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio
   );
+
+  cleaned = cleaned
+    .replace(/\b0\s*(P(?:TAS?|TS?|TA)?|PUERTAS?|PTS)\b/g, " ")
+    .replace(/\b0(P(?:TAS?|TS?|TA)?|PUERTAS?|PTS)\b/g, " ")
+    .replace(/\b(\d{2,})\s*(P(?:TAS?|TS?|TA)?|PUERTAS?|PTS)\b/g, "$1")
+    .replace(/\b(\d{2,})(P(?:TAS?|TS?|TA)?|PUERTAS?|PTS)\b/g, "$1");
 
   if (brand) {
     const normalizedBrand = normalizeText(brand);
@@ -608,16 +672,28 @@ function extractDoorsAndOccupants(versionOriginal = "") {
     .replace(/[-,/]/g, " ");
 
   const doorsMatch = normalized.match(
-    /\b(\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS)\b/
+    /\b0?([23457])(?!\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS)\b/
   );
-  const occMatch = normalized.match(
-    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/
-  );
+  let doors = "";
+  if (doorsMatch) {
+    const doorCount = parseInt(doorsMatch[1], 10);
+    if (VALID_DOOR_COUNTS.has(doorCount)) {
+      doors = `${doorCount}PUERTAS`;
+    }
+  }
 
-  return {
-    doors: doorsMatch ? `${parseInt(doorsMatch[1], 10)}PUERTAS` : "",
-    occupants: occMatch ? `${parseInt(occMatch[1], 10)}OCUP` : "",
-  };
+  const occMatch = normalized.match(
+    /\b0?(\d{1,2})\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/
+  );
+  let occupants = "";
+  if (occMatch) {
+    const occCount = parseInt(occMatch[1], 10);
+    if (Number.isFinite(occCount) && occCount >= 2 && occCount <= 23) {
+      occupants = `${occCount}OCUP`;
+    }
+  }
+
+  return { doors, occupants };
 }
 
 function normalizeTransmission(value) {
@@ -661,17 +737,59 @@ function inferTransmissionFromVersion(versionOriginal = "") {
   return "";
 }
 
-function dedupeTokens(tokens = []) {
-  const seen = new Set();
-  const result = [];
+/**
+ * Detecta si un token es una especificación con número
+ * Ejemplos: "5PUERTAS", "4CIL", "2.0L", "200HP", "7OCUP"
+ */
+function isNumericSpecification(token) {
+  if (!token || typeof token !== "string") return false;
+  return /^\d+(\.\d+)?(PUERTAS?|OCUP|CIL|HP|L|KG|TON|PAX)$/i.test(token);
+}
+
+/**
+ * Deduplica tokens de forma inteligente
+ * - Elimina duplicados NO consecutivos (5PUERTAS ... 5PUERTAS)
+ * - Preserva números puros (2.0L y 2PUERTAS pueden coexistir)
+ * - Mantiene primera ocurrencia de cada especificación
+ */
+function deduplicateTokens(tokens) {
+  const seen = new Map();
+  const dedupedTokens = [];
+
   tokens.forEach((token) => {
-    const normalized = token.trim();
+    const normalized = token.trim().toUpperCase();
     if (!normalized) return;
-    if (seen.has(normalized)) return;
-    seen.add(normalized);
-    result.push(normalized);
+
+    // Caso 1: Especificaciones numéricas (5PUERTAS, 4CIL, etc)
+    if (isNumericSpecification(normalized)) {
+      const specType = normalized.replace(/^\d+(\.\d+)?/, "");
+      if (seen.has(`spec_${specType}`)) return;
+      seen.set(`spec_${specType}`, normalized);
+      dedupedTokens.push(normalized);
+      return;
+    }
+
+    // Caso 2: Tokens alfanuméricos normales
+    if (!/^\d+(\.\d+)?(L|HP)?$/.test(normalized)) {
+      if (seen.has(normalized)) return;
+      seen.set(normalized, true);
+      dedupedTokens.push(normalized);
+      return;
+    }
+
+    // Caso 3: Números puros o con unidades
+    dedupedTokens.push(normalized);
   });
-  return result;
+
+  return dedupedTokens;
+}
+
+/**
+ * Elimina tokens duplicados preservando el orden
+ * @deprecated Use deduplicateTokens() instead for intelligent deduplication
+ */
+function dedupeTokens(tokens = []) {
+  return deduplicateTokens(tokens);
 }
 
 function normalizeText(value) {
@@ -725,10 +843,88 @@ function categorizeError(error) {
   return "NORMALIZATION_ERROR";
 }
 
+/**
+ * Normalize modelo field to remove contamination patterns before hash generation
+ * Fixes issue where "PICK UP SILVERADO" vs "SILVERADO" create different hashes
+ * Enhanced to remove single-letter trim codes and cab type specifications
+ */
+function normalizeModelo(marca, modelo) {
+  if (!modelo || typeof modelo !== "string") return "";
+
+  let normalized = modelo.toUpperCase().trim();
+  const marcaUpper = (marca || "").toUpperCase().trim();
+
+  // 1. Remove NUEVO/NUEVA/NEW prefix
+  normalized = normalized.replace(/^(NUEVO|NUEVA|NEW)\s+/gi, "");
+
+  // Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK)
+  normalized = normalized.replace(/^PICK\s*UP\s+/gi, "");
+  normalized = normalized.replace(/^PICK-UP\s+/gi, "");
+  normalized = normalized.replace(/^CAMIONETA\s+/gi, "");
+  normalized = normalized.replace(/^VAN\s+/gi, "");
+  normalized = normalized.replace(/^TRUCK\s+/gi, "");
+
+  // Remove brand name if repeated in model field
+  if (marcaUpper) {
+    const brandPattern = new RegExp(
+      `^${marcaUpper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`,
+      "gi"
+    );
+    normalized = normalized.replace(brandPattern, "");
+  }
+
+  // 2. Remove trim level/generation from modelo (MK VII, GEN 4)
+  normalized = normalized.replace(/\s+(MK\s*VII?I?|MKVII?I?|GEN\s*\d+)$/gi, "");
+
+  // 3. Remove body type from modelo (SEDAN, SUV, etc.)
+  normalized = normalized.replace(
+    /\s+(SEDAN|HATCHBACK|SUV|COUPE|CONVERTIBLE|PICKUP|VAN|WAGON)$/gi,
+    ""
+  );
+
+  // 4. Collapse spaces in letter+number models (A 3 → A3, E TRON → E-TRON)
+  normalized = normalized.replace(/^([A-Z])\s+([A-Z0-9])/g, "$1$2");
+
+  // 4b. E-TRON needs hyphen (special case)
+  normalized = normalized.replace(/\bETRON\b/g, "E-TRON");
+
+  // Remove single letter trim codes (e.g., "C 1500" → "1500", "M 350" → "350")
+  // Only when followed by numbers to preserve legitimate model codes
+  normalized = normalized.replace(/\s+([A-Z])\s+(\d)/g, " $2");
+
+  // Remove cab type and configuration codes from middle
+  normalized = normalized.replace(/\s+CAB\.?\s*REG\.?(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+CAB\.?\s*REGULAR(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+CREW\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+QUAD\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+MEGA\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+SUPER\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+KING\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+DOBLE\s+CABINA(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+SENCILLA\s+CABINA(?:\s+|$)/gi, " ");
+
+  // Remove standalone trim codes at end (DR, WT, SL, SLE, SLT)
+  normalized = normalized.replace(/\s+(DR|WT|SL|SLE|SLT)$/gi, "");
+
+  // Remove trim level suffixes from end
+  normalized = normalized.replace(
+    /\s+(CREW|QUAD|MEGA|SUPER|KING)\s+CAB$/gi,
+    ""
+  );
+  normalized = normalized.replace(/\s+(DOBLE|SENCILLA)\s+CABINA$/gi, "");
+
+  // Clean up multiple spaces and trim
+  normalized = normalized.replace(/\s+/g, " ").trim();
+
+  return normalized;
+}
+
 function createCommercialHash(vehicle) {
+  const normalizedModelo = normalizeModelo(vehicle.marca, vehicle.modelo);
+
   const key = [
     vehicle.marca || "",
-    vehicle.modelo || "",
+    normalizedModelo || "",
     vehicle.anio ? vehicle.anio.toString() : "",
     vehicle.transmision || "",
   ]
@@ -737,6 +933,28 @@ function createCommercialHash(vehicle) {
     .trim();
 
   return crypto.createHash("sha256").update(key).digest("hex");
+}
+
+function cleanBxModel(rawModel = "", marca = "") {
+  const normalizedModel = normalizeText(rawModel);
+  if (!normalizedModel) return "";
+
+  let cleaned = normalizedModel;
+  const normalizedMarca = normalizeText(marca);
+
+  if (normalizedMarca === "VOLVO") {
+    cleaned = cleaned
+      .replace(/\bXC\s+(\d+)\b/g, "XC$1")
+      .replace(/\bV\s+(\d+)\b/g, "V$1")
+      .replace(/\bS\s+(\d+)\b/g, "S$1")
+      .replace(/\bC\s+(\d+)\b/g, "C$1");
+  }
+
+  if (normalizedMarca === "MAZDA") {
+    cleaned = cleaned.replace(/^MAZDA\s+/, "");
+  }
+
+  return cleaned;
 }
 
 function processBxRecord(record) {
@@ -766,9 +984,12 @@ function processBxRecord(record) {
   );
 
   versionLimpia = versionLimpia
-    .replace(/\b\d\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS)\b/gi, " ")
     .replace(
-      /\b0?\d+\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/gi,
+      /\b0?([23457])(?!\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS)\b/gi,
+      " "
+    )
+    .replace(
+      /\b0?\d{1,2}\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/gi,
       " "
     )
     .replace(/\s+[.,](?=\s|$)/g, " ")
@@ -783,12 +1004,6 @@ function processBxRecord(record) {
     if (!token) return;
     if (/^[.,]$/.test(token)) return;
     if (/^\d+$/.test(token)) {
-      if (!doors && !fallbackDoors) {
-        const numericValue = parseInt(token, 10);
-        if (Number.isFinite(numericValue) && numericValue > 0) {
-          fallbackDoors = `${numericValue}PUERTAS`;
-        }
-      }
       const next = (arr[idx + 1] || "").toUpperCase();
       const prev = (arr[idx - 1] || "").toUpperCase();
       if (
@@ -797,6 +1012,15 @@ function processBxRecord(record) {
         NUMERIC_CONTEXT_TOKENS.has(prev)
       ) {
         return;
+      }
+      if (!doors && !fallbackDoors) {
+        const numericValue = parseInt(token, 10);
+        if (
+          Number.isFinite(numericValue) &&
+          VALID_DOOR_COUNTS.has(numericValue)
+        ) {
+          fallbackDoors = `${numericValue}PUERTAS`;
+        }
       }
       sanitizedTokens.push(token);
       return;
@@ -824,11 +1048,13 @@ function processBxRecord(record) {
     throw new Error("Normalization produced empty version_limpia");
   }
 
+  const modeloLimpio = cleanBxModel(record.modelo || "", record.marca || "");
+
   const normalized = {
     origen_aseguradora: "BX",
     id_original: record.id_original,
     marca: normalizeText(record.marca),
-    modelo: normalizeText(record.modelo),
+    modelo: normalizeModelo(record.marca, modeloLimpio || record.modelo),
     anio: record.anio,
     transmision: record.transmision,
     version_original: versionOriginal,

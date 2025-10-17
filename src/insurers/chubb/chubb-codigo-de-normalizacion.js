@@ -44,6 +44,7 @@ const CHUBB_NORMALIZATION_DICTIONARY = {
     "T.P.",
     "FBX",
     "IMO",
+    "DIS",
     "CQ",
     "TELA",
     "CT",
@@ -199,6 +200,8 @@ const NUMERIC_CONTEXT_TOKENS = new Set([
   "PAX",
 ]);
 
+const VALID_DOOR_COUNTS = new Set([2, 3, 4, 5, 7]);
+
 const PROTECTED_HYPHEN_TOKENS = [
   {
     regex: /\bA[\s-]?SPEC\b/gi,
@@ -254,17 +257,40 @@ function restoreProtectedTokens(value = "") {
 
 function normalizeStandaloneLiters(value = "") {
   if (!value || typeof value !== "string") return "";
-  return value
-    .replace(/\b(\d+\.\d+)\s+L\b/g, "$1L")
-    .replace(
-      /\b(\d+\.\d+)(?=\s|$)(?!\s*(?:L\b|\d|TURBO\b|BITURBO\b|SUPERCHARGED\b|SUPERCARGADO\b))/g,
-      (match) => {
-        const liters = parseFloat(match);
-        if (!Number.isFinite(liters) || liters <= 0 || liters > 12)
-          return match;
-        return `${match}L`;
+
+  // First, compact spaced liters like "2.3 L" → "2.3L"
+  const compacted = value.replace(/\b(\d+\.\d+)\s+L\b/g, "$1L");
+
+  // Then add L to standalone decimal numbers that look like liters
+  return compacted.replace(
+    /\b(\d+\.\d+)(?!\s*(?:L\b|TON|TONELADAS|KG|KILOGRAMOS|PUERTAS|OCUP|CIL|SERIE))/gi,
+    (match, _raw, offset, source) => {
+      const liters = parseFloat(match);
+      if (!Number.isFinite(liters) || liters < 0.5 || liters > 8) {
+        return match;
       }
-    );
+      const before = source
+        .substring(Math.max(0, offset - 20), offset)
+        .toUpperCase();
+      if (/\b(TON|TONELADAS|KG|KILOGRAMOS|PESO|CAB|CHASIS)\b/.test(before)) {
+        return match;
+      }
+      const after = source
+        .substring(offset + match.length, offset + match.length + 20)
+        .toUpperCase();
+      if (/\b(PUERTAS|PTS?|OCUP|PASAJEROS?|PAS|CIL|SERIE)\b/.test(after)) {
+        return match;
+      }
+      return `${match}L`;
+    }
+  );
+}
+function collapseDisplacementArtifacts(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value
+    .replace(/\b(\d+CIL)\.0(?:\.0L)?\b/g, "$1")
+    .replace(/\b(\d+CIL)\s+0\.0L\b/g, "$1")
+    .replace(/\b(\d+(?:\.\d+)L)(?:\s*\1)+\b/g, "$1");
 }
 
 function applyEngineAliases(value = "") {
@@ -279,7 +305,7 @@ function applyEngineAliases(value = "") {
 function normalizeEngineDisplacement(value = "") {
   if (!value || typeof value !== "string") return "";
   return value
-    .replace(/\b(\d)(\d)L\b/g, "$1.$2L")
+    .replace(/\b(?<!\.)(\d)(\d)L\b/g, "$1.$2L")
     .replace(/\b(?<!\d\.)\d+L\b/g, (match) => `${match.slice(0, -1)}.0L`)
     .replace(/\b(?<!\d\.)\d+\s+L\b/g, (match) => {
       const digits = match.match(/\d+/)[0];
@@ -382,11 +408,31 @@ function normalizeDrivetrain(value = "") {
 function cleanVersionString(versionString = "", model = "", marca = "") {
   if (!versionString || typeof versionString !== "string") return "";
 
-  let cleaned = versionString.toUpperCase().trim();
+  let cleaned = versionString
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/["'\u201C\u201D\u2018\u2019]/g, " ")
+    .trim();
+
+  cleaned = cleaned.replace(/AUT(?=[A-Z0-9])/g, "AUT ");
   cleaned = applyProtectedTokens(cleaned);
   cleaned = cleaned.replace(/\bRA-?(\d+)\b/g, "R$1");
   cleaned = cleaned.replace(/[\/,]/g, " ");
   cleaned = cleaned.replace(/-/g, " ");
+
+  // NEW: Remove generation/trim prefixes (A7, MK VII, etc.) - NUEVO already handled in lines 447-449
+  cleaned = cleaned.replace(
+    /\b(A[4-7]|MK\s*VII?I?|MKVII?I?|GEN\s*\d+)\s+/gi,
+    ""
+  );
+
+  // NEW: Remove body types from version
+  cleaned = cleaned.replace(
+    /\b(SEDAN|HATCHBACK|SUV|COUPE|CONVERTIBLE|PICKUP|VAN|WAGON)\b/gi,
+    " "
+  );
 
   cleaned = normalizeDrivetrain(cleaned);
   cleaned = normalizeTurboTokens(cleaned);
@@ -394,6 +440,11 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   cleaned = normalizeCylinders(cleaned);
   cleaned = normalizeEngineDisplacement(cleaned);
   cleaned = normalizeStandaloneLiters(cleaned);
+  cleaned = cleaned
+    .replace(/\b0+(?:\.\d+)?\s*TON(?:ELADAS)?\b/gi, " ")
+    .replace(/\bTONELADAS?\b/gi, "TON")
+    .replace(/LTON\b/g, "L TON");
+  cleaned = collapseDisplacementArtifacts(cleaned);
 
   CHUBB_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.forEach((token) => {
     const regex = new RegExp(`\\b${escapeRegex(token)}\\b`, "gi");
@@ -402,14 +453,26 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
 
   if (model) {
     cleaned = cleaned.replace(
-      new RegExp(`\\b${escapeRegex(model.toUpperCase())}\\b`, "gi"),
+      new RegExp(`\b${escapeRegex(model.toUpperCase())}\b`, "gi"),
       " "
     );
+    cleaned = cleaned.replace(/\bNUEVA?\s+LINEA\b/g, "");
+    cleaned = cleaned.replace(/\bNUEV[OA]\b/g, "");
+    cleaned = cleaned.replace(/\bNEW\b/g, "");
+    cleaned = cleaned.replace(/\bPASAJEROS\b/g, "");
+    cleaned = cleaned.replace(/\bMINI\s+COOPER\b.*/g, "MINI COOPER");
+    cleaned = cleaned.replace(/\bMINICOOPER\b/g, "MINI COOPER");
+    cleaned = cleaned.replace(/\bF[\s.-]?(\d{2,3})\b/g, "F$1");
+    cleaned = cleaned.replace(/\bGENERACION\b/g, "GEN");
+    cleaned = cleaned.replace(/\bGEN\./g, "GEN");
+    if (/\bJETTA\b/.test(cleaned)) {
+      cleaned = cleaned.replace(/\bJETTA\b.*/, "JETTA");
+    }
   }
 
   if (marca) {
     cleaned = cleaned.replace(
-      new RegExp(`\\b${escapeRegex(marca.toUpperCase())}\\b`, "gi"),
+      new RegExp(`\b${escapeRegex(marca.toUpperCase())}\b`, "gi"),
       " "
     );
   }
@@ -448,40 +511,37 @@ function extractDoorsAndOccupants(versionOriginal = "") {
     return { doors: "", occupants: "" };
   }
 
-  const normalizedOriginal = versionOriginal.toUpperCase();
-  const doorPatterns = [
-    /\b(\d+)\s*P(?:TAS?|TS?|TA)?\.?\b/,
-    /\b(\d+)\s*PUERTAS?\b/,
-    /\b(\d)\s*(?:ABS|D\/T)\b/,
-  ];
-
+  const upper = versionOriginal.toUpperCase();
+  const doorMatch = upper.match(
+    /\b(\d{1,2})\s*(?:P(?:UERTAS?|TAS?|TS?|TA)?|PUERTAS?|P)\b/
+  );
   let doors = "";
-  for (const pattern of doorPatterns) {
-    const match = normalizedOriginal.match(pattern);
-    if (match) {
-      const value = parseInt(match[1], 10);
-      if (Number.isFinite(value) && value > 0) {
-        doors = `${value}PUERTAS`;
-        break;
+  if (doorMatch) {
+    const doorCount = parseInt(doorMatch[1], 10);
+    if (VALID_DOOR_COUNTS.has(doorCount)) {
+      doors = `${doorCount}PUERTAS`;
+    }
+  }
+
+  // Extract doors from "4 ABS" pattern (common in CHUBB data)
+  if (!doors) {
+    const absDoorsMatch = upper.match(/\b([2-7])\s+ABS\b/);
+    if (absDoorsMatch) {
+      const absCount = parseInt(absDoorsMatch[1], 10);
+      if (VALID_DOOR_COUNTS.has(absCount)) {
+        doors = `${absCount}PUERTAS`;
       }
     }
   }
 
-  const occupantPatterns = [
-    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX)\b/,
-    /\b0?(\d+)(?:OCUPANTES?|OCUP|OCU|OC)\b/,
-    /\b0?(\d+)\s*(?:PASAJEROS?|PAS)\b/,
-  ];
-
+  const occMatch = upper.match(
+    /\b0?(\d{1,2})\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/
+  );
   let occupants = "";
-  for (const pattern of occupantPatterns) {
-    const match = normalizedOriginal.match(pattern);
-    if (match) {
-      const value = parseInt(match[1], 10);
-      if (Number.isFinite(value) && value > 0) {
-        occupants = `${value}OCUP`;
-        break;
-      }
+  if (occMatch) {
+    const occCount = parseInt(occMatch[1], 10);
+    if (Number.isFinite(occCount) && occCount >= 2 && occCount <= 23) {
+      occupants = `${occCount}OCUP`;
     }
   }
 
@@ -515,17 +575,59 @@ function inferTransmissionFromVersion(versionOriginal = "") {
   return "";
 }
 
-function dedupeTokens(tokens = []) {
-  const seen = new Set();
-  const deduped = [];
+/**
+ * Detecta si un token es una especificación con número
+ * Ejemplos: "5PUERTAS", "4CIL", "2.0L", "200HP", "7OCUP"
+ */
+function isNumericSpecification(token) {
+  if (!token || typeof token !== "string") return false;
+  return /^\d+(\.\d+)?(PUERTAS?|OCUP|CIL|HP|L|KG|TON|PAX)$/i.test(token);
+}
+
+/**
+ * Deduplica tokens de forma inteligente
+ * - Elimina duplicados NO consecutivos (5PUERTAS ... 5PUERTAS)
+ * - Preserva números puros (2.0L y 2PUERTAS pueden coexistir)
+ * - Mantiene primera ocurrencia de cada especificación
+ */
+function deduplicateTokens(tokens) {
+  const seen = new Map();
+  const dedupedTokens = [];
+
   tokens.forEach((token) => {
-    if (!token) return;
-    if (!seen.has(token)) {
-      seen.add(token);
-      deduped.push(token);
+    const normalized = token.trim().toUpperCase();
+    if (!normalized) return;
+
+    // Caso 1: Especificaciones numéricas (5PUERTAS, 4CIL, etc)
+    if (isNumericSpecification(normalized)) {
+      const specType = normalized.replace(/^\d+(\.\d+)?/, "");
+      if (seen.has(`spec_${specType}`)) return;
+      seen.set(`spec_${specType}`, normalized);
+      dedupedTokens.push(normalized);
+      return;
     }
+
+    // Caso 2: Tokens alfanuméricos normales
+    if (!/^\d+(\.\d+)?(L|HP)?$/.test(normalized)) {
+      if (seen.has(normalized)) return;
+      seen.set(normalized, true);
+      dedupedTokens.push(normalized);
+      return;
+    }
+
+    // Caso 3: Números puros o con unidades
+    dedupedTokens.push(normalized);
   });
-  return deduped;
+
+  return dedupedTokens;
+}
+
+/**
+ * Elimina tokens duplicados preservando el orden
+ * @deprecated Use deduplicateTokens() instead for intelligent deduplication
+ */
+function dedupeTokens(tokens = []) {
+  return deduplicateTokens(tokens);
 }
 
 const BATCH_SIZE = 5000;
@@ -598,27 +700,12 @@ function processChubbRecord(record) {
 
   // FIX: Never let a bare number linger if used for doors (or if it's context-free noise)
   const tokens = versionLimpia.split(" ").filter(Boolean);
-  let fallbackDoors = "";
   const sanitizedTokens = [];
 
   tokens.forEach((token, idx, arr) => {
     if (/^[.,]$/.test(token)) return;
 
     if (/^\d+$/.test(token)) {
-      const numericValue = parseInt(token, 10);
-
-      // Use as fallback door count, but DO NOT keep the number token
-      if (
-        !doors &&
-        !fallbackDoors &&
-        Number.isFinite(numericValue) &&
-        numericValue > 0
-      ) {
-        fallbackDoors = `${numericValue}PUERTAS`;
-        return; // drop the floating number
-      }
-
-      // If adjacent to numeric context (OCUP, PUERTAS, etc.), drop the bare number
       const next = (arr[idx + 1] || "").toUpperCase();
       const prev = (arr[idx - 1] || "").toUpperCase();
       if (
@@ -626,22 +713,19 @@ function processChubbRecord(record) {
         NUMERIC_CONTEXT_TOKENS.has(next) ||
         NUMERIC_CONTEXT_TOKENS.has(prev)
       ) {
-        return; // part of a numeric phrase; we still don't keep the naked number
+        return;
       }
-
-      // Any other bare number is noise — drop it
       return;
     }
 
     sanitizedTokens.push(token);
   });
-
   versionLimpia = dedupeTokens(sanitizedTokens)
     .join(" ")
     .replace(/\s+/g, " ")
     .trim();
 
-  const finalDoors = doors || fallbackDoors;
+  const finalDoors = doors;
   versionLimpia = [versionLimpia, finalDoors, occupants]
     .filter(Boolean)
     .join(" ")
@@ -652,7 +736,7 @@ function processChubbRecord(record) {
     origen_aseguradora: "CHUBB",
     id_original: record.id_original,
     marca: normalizeText(record.marca),
-    modelo: normalizeText(record.modelo),
+    modelo: normalizeModelo(record.marca, record.modelo),
     anio: record.anio,
     transmision: record.transmision,
     version_original: record.version_original,
@@ -664,10 +748,88 @@ function processChubbRecord(record) {
   return normalized;
 }
 
+/**
+ * Normalize modelo field to remove contamination patterns before hash generation
+ * Fixes issue where "PICK UP SILVERADO" vs "SILVERADO" create different hashes
+ * Enhanced to remove single-letter trim codes and cab type specifications
+ */
+function normalizeModelo(marca, modelo) {
+  if (!modelo || typeof modelo !== "string") return "";
+
+  let normalized = modelo.toUpperCase().trim();
+  const marcaUpper = (marca || "").toUpperCase().trim();
+
+  // 1. Remove NUEVO/NUEVA/NEW prefix
+  normalized = normalized.replace(/^(NUEVO|NUEVA|NEW)\s+/gi, "");
+
+  // Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK)
+  normalized = normalized.replace(/^PICK\s*UP\s+/gi, "");
+  normalized = normalized.replace(/^PICK-UP\s+/gi, "");
+  normalized = normalized.replace(/^CAMIONETA\s+/gi, "");
+  normalized = normalized.replace(/^VAN\s+/gi, "");
+  normalized = normalized.replace(/^TRUCK\s+/gi, "");
+
+  // Remove brand name if repeated in model field
+  if (marcaUpper) {
+    const brandPattern = new RegExp(
+      `^${marcaUpper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`,
+      "gi"
+    );
+    normalized = normalized.replace(brandPattern, "");
+  }
+
+  // 2. Remove trim level/generation from modelo (MK VII, GEN 4)
+  normalized = normalized.replace(/\s+(MK\s*VII?I?|MKVII?I?|GEN\s*\d+)$/gi, "");
+
+  // 3. Remove body type from modelo (SEDAN, SUV, etc.)
+  normalized = normalized.replace(
+    /\s+(SEDAN|HATCHBACK|SUV|COUPE|CONVERTIBLE|PICKUP|VAN|WAGON)$/gi,
+    ""
+  );
+
+  // 4. Collapse spaces in letter+number models (A 3 → A3, E TRON → E-TRON)
+  normalized = normalized.replace(/^([A-Z])\s+([A-Z0-9])/g, "$1$2");
+
+  // 4b. E-TRON needs hyphen (special case)
+  normalized = normalized.replace(/\bETRON\b/g, "E-TRON");
+
+  // Remove single letter trim codes (e.g., "C 1500" → "1500", "M 350" → "350")
+  // Only when followed by numbers to preserve legitimate model codes
+  normalized = normalized.replace(/\s+([A-Z])\s+(\d)/g, " $2");
+
+  // Remove cab type and configuration codes from middle
+  normalized = normalized.replace(/\s+CAB\.?\s*REG\.?(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+CAB\.?\s*REGULAR(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+CREW\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+QUAD\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+MEGA\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+SUPER\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+KING\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+DOBLE\s+CABINA(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+SENCILLA\s+CABINA(?:\s+|$)/gi, " ");
+
+  // Remove standalone trim codes at end (DR, WT, SL, SLE, SLT)
+  normalized = normalized.replace(/\s+(DR|WT|SL|SLE|SLT)$/gi, "");
+
+  // Remove trim level suffixes from end
+  normalized = normalized.replace(
+    /\s+(CREW|QUAD|MEGA|SUPER|KING)\s+CAB$/gi,
+    ""
+  );
+  normalized = normalized.replace(/\s+(DOBLE|SENCILLA)\s+CABINA$/gi, "");
+
+  // Clean up multiple spaces and trim
+  normalized = normalized.replace(/\s+/g, " ").trim();
+
+  return normalized;
+}
+
 function createCommercialHash(vehicle) {
+  const normalizedModelo = normalizeModelo(vehicle.marca, vehicle.modelo);
+
   const key = [
     vehicle.marca || "",
-    vehicle.modelo || "",
+    normalizedModelo || "",
     vehicle.anio ? vehicle.anio.toString() : "",
     vehicle.transmision || "",
   ]

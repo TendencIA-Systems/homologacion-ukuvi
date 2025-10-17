@@ -39,6 +39,21 @@ const ZURICH_NORMALIZATION_DICTIONARY = {
     "DH",
     "C",
     "FBX",
+    "IMP",
+    "CQ",
+    "TELA",
+    "ASIENTO GIRATORIO",
+    // Wheel/rim sizes
+    "R14",
+    "R15",
+    "R16",
+    "R17",
+    "R18",
+    "R19",
+    "R20",
+    "R21",
+    "R22",
+    "R23",
     // indicadores de transmisión (para limpiar la versión)
     "STD",
     "AUT",
@@ -60,6 +75,8 @@ const ZURICH_NORMALIZATION_DICTIONARY = {
     "SPEEDSHIFT",
     "G-TRONIC",
     "G TRONIC",
+    "RHYNE",
+    "RHYNE SIZE",
   ],
   transmission_normalization: {
     STD: "MANUAL",
@@ -123,6 +140,31 @@ const PROTECTED_HYPHEN_TOKENS = [
     placeholder: "__Z_PROTECTED_TYPE_F__",
     canonical: "TYPE-F",
   },
+  {
+    regex: /\bT5\b/gi,
+    placeholder: "__Z_PROTECTED_T5__",
+    canonical: "T5",
+  },
+  {
+    regex: /\bT6\b/gi,
+    placeholder: "__Z_PROTECTED_T6__",
+    canonical: "T6",
+  },
+  {
+    regex: /\bT7\b/gi,
+    placeholder: "__Z_PROTECTED_T7__",
+    canonical: "T7",
+  },
+  {
+    regex: /\bT8\b/gi,
+    placeholder: "__Z_PROTECTED_T8__",
+    canonical: "T8",
+  },
+  {
+    regex: /\bT9\b/gi,
+    placeholder: "__Z_PROTECTED_T9__",
+    canonical: "T9",
+  },
 ];
 
 const ENGINE_ALIAS_PATTERNS = [
@@ -140,6 +182,7 @@ function applyProtectedTokens(text = "") {
   });
   return output;
 }
+
 function restoreProtectedTokens(text = "") {
   let output = text;
   PROTECTED_HYPHEN_TOKENS.forEach(({ placeholder, canonical }) => {
@@ -147,13 +190,28 @@ function restoreProtectedTokens(text = "") {
   });
   return output;
 }
+
 function normalizeStandaloneLiters(text = "") {
   if (!text || typeof text !== "string") return "";
   return text.replace(
-    /\b(\d+\.\d+)(?!\s*(?:L\b|\d|TURBO\b|BITURBO\b|SUPERCHARGED\b|SUPERCARGADO\b))/g,
-    (match) => {
+    /\b(\d+\.\d+)(?!\s*(?:L\b|TON|TONELADAS|KG|KILOGRAMOS|PUERTAS|OCUP|CIL))/gi,
+    (match, _value, offset, source) => {
       const liters = parseFloat(match);
-      if (!Number.isFinite(liters) || liters <= 0 || liters > 12) return match;
+      if (!Number.isFinite(liters) || liters < 0.5 || liters > 8) {
+        return match;
+      }
+      const before = source
+        .substring(Math.max(0, offset - 20), offset)
+        .toUpperCase();
+      if (/\b(TON|TONELADAS|KG|KILOGRAMOS|PESO|CAB|CHASIS)\b/.test(before)) {
+        return match;
+      }
+      const after = source
+        .substring(offset + match.length, offset + match.length + 20)
+        .toUpperCase();
+      if (/\b(PUERTAS|PTS?|OCUP|PASAJEROS?|PAS|CIL|SERIE)\b/.test(after)) {
+        return match;
+      }
       return `${match}L`;
     }
   );
@@ -188,10 +246,11 @@ function normalizeDrivetrain(text = "") {
     .replace(/\b2WD\b/g, "RWD")
     .replace(/\bRWD\b/g, "RWD");
 }
+
 function normalizeEngineDisplacement(text = "") {
   if (!text || typeof text !== "string") return "";
   return text
-    .replace(/\b(\d)(\d)L\b/g, "$1.$2L")
+    .replace(/\b(?<!\.)(\d)(\d)L\b/g, "$1.$2L")
     .replace(/\b(?<!\d\.)\d+L\b/g, (match) => `${match.slice(0, -1)}.0L`)
     .replace(/\b(?<!\d\.)\d+\s+L\b/g, (match) => {
       const digits = match.match(/\d+/)[0];
@@ -242,13 +301,37 @@ function normalizeTurboTokens(text = "") {
     }
   );
 }
+
 function normalizeCylinders(text = "") {
   return text;
 }
 
+// NUEVA FUNCIÓN: Limpia la marca del modelo para Mazda
+function cleanZurichModel(model, marca) {
+  if (!model || !marca) return model;
+
+  const normalizedMarca = marca.toUpperCase().trim();
+  const normalizedModel = model.toUpperCase().trim();
+
+  // Remover "MAZDA" del inicio del modelo si la marca es MAZDA
+  if (normalizedMarca === "MAZDA" && normalizedModel.startsWith("MAZDA ")) {
+    return normalizedModel.replace(/^MAZDA\s+/, "").trim();
+  }
+
+  return model;
+}
+
 function cleanVersionString(versionString, model = "") {
   if (!versionString || typeof versionString !== "string") return "";
-  let cleaned = versionString.toUpperCase().trim();
+  let cleaned = versionString
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/["'\u201C\u201D\u2018\u2019]/g, " ")
+    .trim();
+
+  cleaned = cleaned.replace(/AUT(?=[A-Z0-9])/g, "AUT ");
   cleaned = applyProtectedTokens(cleaned);
   cleaned = cleaned.replace(/\bRA-?(\d+)\b/g, "R$1");
   cleaned = cleaned.replace(/-/g, " ");
@@ -259,16 +342,50 @@ function cleanVersionString(versionString, model = "") {
   cleaned = normalizeEngineDisplacement(cleaned);
   cleaned = normalizeStandaloneLiters(cleaned);
 
+  // Normalize horsepower values
+  cleaned = cleaned
+    .replace(/\b(\d+)\s*HP\b/gi, "$1HP")
+    .replace(/\b(\d+)\s*C\.?P\.?\b/gi, "$1HP")
+    .replace(/\b(\d+)\s*H\.?P\.?\b/gi, "$1HP");
+
+  cleaned = cleaned
+    .replace(/\b0+(?:\.\d+)?\s*TON(?:ELADAS)?\b/gi, " ")
+    .replace(/\bTONELADAS?\b/gi, "TON")
+    .replace(/LTON\b/g, "L TON");
+
   ZURICH_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.forEach((token) => {
     cleaned = cleaned.replace(new RegExp(`\\b${token}\\b`, "gi"), " ");
   });
 
   if (model) {
-    cleaned = cleaned.replace(
-      new RegExp(`\\b${model.toUpperCase()}\\b`, "gi"),
-      " "
-    );
+    const normalizedModel = model.toUpperCase().trim();
+    if (normalizedModel) {
+      // Escape special regex characters and use word boundaries
+      const escapedModel = normalizedModel.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&"
+      );
+      cleaned = cleaned.replace(new RegExp(`\\b${escapedModel}\\b`, "gi"), " ");
+    }
+    cleaned = cleaned.replace(/\bNUEVA?\s+LINEA\b/g, "");
+    cleaned = cleaned.replace(/\bNUEV[OA]\b/g, "");
+    cleaned = cleaned.replace(/\bNEW\b/g, "");
+    cleaned = cleaned.replace(/\bPASAJEROS\b/g, "");
+    cleaned = cleaned.replace(/\bMINI\s+COOPER\b.*/g, "MINI COOPER");
+    cleaned = cleaned.replace(/\bMINICOOPER\b/g, "MINI COOPER");
+    cleaned = cleaned.replace(/\bF[\s.-]?(\d{2,3})\b/g, "F$1");
+    cleaned = cleaned.replace(/\bGENERACION\b/g, "GEN");
+    cleaned = cleaned.replace(/\bGEN\./g, "GEN");
+    if (/\bJETTA\b/.test(cleaned)) {
+      cleaned = cleaned.replace(/\bJETTA\b.*/, "JETTA");
+    }
   }
+
+  // NEW: Remove generation/trim prefixes (A7, MK VII, etc.)
+  cleaned = cleaned.replace(
+    /\b(A[4-7]|MK\s*VII?I?|MKVII?I?|GEN\s*\d+)\s+/gi,
+    ""
+  );
 
   cleaned = cleaned
     .replace(/\bHB\b/g, "HATCHBACK")
@@ -276,8 +393,15 @@ function cleanVersionString(versionString, model = "") {
     .replace(/\bCONV\b/g, "CONVERTIBLE")
     .replace(/\bGW\b/g, "WAGON")
     .replace(/\bV8\b/g, "8CIL")
-    .replace(/\bPICK\s*UP\b/g, "PICKUP")
-    .replace(/(?<!\d)[\.,]|[\.,](?!\d)/g, " ");
+    .replace(/\bPICK\s*UP\b/g, "PICKUP");
+
+  // NEW: Remove body types from version
+  cleaned = cleaned.replace(
+    /\b(SEDAN|HATCHBACK|SUV|COUPE|CONVERTIBLE|PICKUP|VAN|WAGON)\b/gi,
+    " "
+  );
+
+  cleaned = cleaned.replace(/(?<!\d)[\.,]|[\.,](?!\d)/g, " ");
 
   Object.values(ZURICH_NORMALIZATION_DICTIONARY.regex_patterns).forEach(
     (pattern) => {
@@ -300,20 +424,41 @@ function cleanVersionString(versionString, model = "") {
   );
 
   cleaned = restoreProtectedTokens(cleaned);
+
+  // NEW: Deduplicate tokens (critical for QUALITAS-like issues)
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+  const uniqueTokens = [...new Set(tokens)];
+  cleaned = uniqueTokens.join(" ");
+
   return cleaned;
 }
 
 function extractDoorsAndOccupants(versionOriginal = "") {
-  const doorsMatch = versionOriginal.match(
-    /\b(\d)\s*P(?:TAS|TA|TS)?\.?(?=\b)/i
+  if (!versionOriginal || typeof versionOriginal !== "string") {
+    return { doors: "", occupants: "" };
+  }
+  const upper = versionOriginal.toUpperCase();
+  const doorsMatch = upper.match(
+    /\b(\d{1,2})\s*(?:P(?:UERTAS?|TAS?|TS?|TA)?|PUERTAS?|P)\b/
   );
-  const occMatch = versionOriginal.match(
-    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJEROS?|PAS)\b/
+  let doors = "";
+  if (doorsMatch) {
+    const doorCount = parseInt(doorsMatch[1], 10);
+    if ([2, 3, 4, 5, 7].includes(doorCount)) {
+      doors = `${doorCount}PUERTAS`;
+    }
+  }
+  const occMatch = upper.match(
+    /\b0?(\d{1,2})\s*(?:OCUPANTES?|OCUP|OCU|OC|PAX|PASAJEROS?|PAS)\b/
   );
-  return {
-    doors: doorsMatch ? `${doorsMatch[1]}PUERTAS` : "",
-    occupants: occMatch ? `${parseInt(occMatch[1], 10)}OCUP` : "",
-  };
+  let occupants = "";
+  if (occMatch) {
+    const occCount = parseInt(occMatch[1], 10);
+    if (Number.isFinite(occCount) && occCount >= 2 && occCount <= 23) {
+      occupants = `${occCount}OCUP`;
+    }
+  }
+  return { doors, occupants };
 }
 
 function normalizeTransmission(code) {
@@ -377,6 +522,9 @@ function processZurichRecord(record) {
     inferTransmissionFromVersion(record.version_original);
   record.transmision = derivedTransmission;
 
+  // MODIFICACIÓN: Limpiar el modelo removiendo "MAZDA" si aplica
+  const cleanedModel = cleanZurichModel(record.modelo, record.marca);
+
   const { doors, occupants } = extractDoorsAndOccupants(
     record.version_original || ""
   );
@@ -387,23 +535,36 @@ function processZurichRecord(record) {
 
   let versionLimpia = cleanVersionString(
     record.version_original || "",
-    record.modelo || ""
+    cleanedModel || ""
   );
   versionLimpia = versionLimpia
     .replace(/\b\d\s*P(?:TAS|TA|TS)?\.?(?=\b)/gi, " ")
     .replace(/\b0?\d+\s*OCUP?\.?\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
-  versionLimpia = [versionLimpia, doors, occupants]
-    .filter(Boolean)
-    .join(" ")
-    .trim();
+
+  // CRITICAL FIX: Only append doors/occupants if NOT already present
+  // Prevents: "5PUERTAS ... 5PUERTAS" when already in versionLimpia
+  const specsToAppend = [];
+  if (doors && !versionLimpia.includes(doors)) {
+    specsToAppend.push(doors);
+  }
+  if (occupants && !versionLimpia.includes(occupants)) {
+    specsToAppend.push(occupants);
+  }
+
+  if (specsToAppend.length > 0) {
+    versionLimpia = [versionLimpia, ...specsToAppend]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+  }
 
   const normalized = {
     origen_aseguradora: "ZURICH",
     id_original: record.id_original,
     marca: normalizeText(record.marca),
-    modelo: normalizeText(record.modelo),
+    modelo: normalizeModelo(record.marca, cleanedModel),
     anio: record.anio,
     transmision: record.transmision,
     version_original: record.version_original,
@@ -414,10 +575,88 @@ function processZurichRecord(record) {
   return normalized;
 }
 
+/**
+ * Normalize modelo field to remove contamination patterns before hash generation
+ * ENHANCED VERSION - adds NUEVO prefix, trim levels, body types, and letter spacing fixes
+ * Fixes 4,641 cases of modelo contamination identified in analysis
+ */
+function normalizeModelo(marca, modelo) {
+  if (!modelo || typeof modelo !== "string") return "";
+
+  let normalized = modelo.toUpperCase().trim();
+  const marcaUpper = (marca || "").toUpperCase().trim();
+
+  // 1. Remove NUEVO/NUEVA/NEW prefix (1,195 cases) - NEW FIX
+  normalized = normalized.replace(/^(NUEVO|NUEVA|NEW)\s+/gi, "");
+
+  // 2. Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK) - existing
+  normalized = normalized.replace(/^PICK\s*UP\s+/gi, "");
+  normalized = normalized.replace(/^PICK-UP\s+/gi, "");
+  normalized = normalized.replace(/^CAMIONETA\s+/gi, "");
+  normalized = normalized.replace(/^VAN\s+/gi, "");
+  normalized = normalized.replace(/^TRUCK\s+/gi, "");
+
+  // 3. Remove brand name if repeated in model field - existing
+  if (marcaUpper) {
+    const brandPattern = new RegExp(
+      `^${marcaUpper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`,
+      "gi"
+    );
+    normalized = normalized.replace(brandPattern, "");
+  }
+
+  // 4. Remove trim level/generation from modelo (72 cases) - NEW FIX
+  normalized = normalized.replace(/\s+(MK\s*VII?I?|MKVII?I?|GEN\s*\d+)$/gi, "");
+
+  // 5. Remove body type from modelo (2,084 cases) - NEW FIX
+  normalized = normalized.replace(
+    /\s+(SEDAN|HATCHBACK|SUV|COUPE|CONVERTIBLE|PICKUP|VAN|WAGON)$/gi,
+    ""
+  );
+
+  // 6. Collapse spaces in letter+number models (1,290 cases) - NEW FIX
+  // "A 3" → "A3", "E TRON" → "ETRON", "T T" → "TT"
+  normalized = normalized.replace(/^([A-Z])\s+([A-Z0-9])/g, "$1$2");
+
+  // 6b. E-TRON needs hyphen (special case) - NEW FIX
+  normalized = normalized.replace(/\bETRON\b/g, "E-TRON");
+
+  // 7. Remove single letter trim codes (e.g., "C 1500" → "1500") - existing
+  normalized = normalized.replace(/\s+([A-Z])\s+(\d)/g, " $2");
+
+  // 8. Remove cab type and configuration codes - existing
+  normalized = normalized.replace(/\s+CAB\.?\s*REG\.?(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+CAB\.?\s*REGULAR(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+CREW\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+QUAD\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+MEGA\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+SUPER\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+KING\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+DOBLE\s+CABINA(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+SENCILLA\s+CABINA(?:\s+|$)/gi, " ");
+
+  // 9. Remove standalone trim codes at end - existing
+  normalized = normalized.replace(/\s+(DR|WT|SL|SLE|SLT)$/gi, "");
+
+  // 10. Remove trim level suffixes from end - existing
+  normalized = normalized.replace(
+    /\s+(CREW|QUAD|MEGA|SUPER|KING)\s+CAB$/gi,
+    ""
+  );
+  normalized = normalized.replace(/\s+(DOBLE|SENCILLA)\s+CABINA$/gi, "");
+
+  // Final cleanup
+  normalized = normalized.replace(/\s+/g, " ").trim();
+
+  return normalized;
+}
+
 function createCommercialHash(vehicle) {
+  const normalizedModelo = normalizeModelo(vehicle.marca, vehicle.modelo);
+
   const key = [
     vehicle.marca || "",
-    vehicle.modelo || "",
+    normalizedModelo || "",
     vehicle.anio ? vehicle.anio.toString() : "",
     vehicle.transmision || "",
   ]

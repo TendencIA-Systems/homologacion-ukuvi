@@ -1,0 +1,1639 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Análisis Comparativo de Configuraciones de Bases - Sistema de Homologación</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        header p {
+            font-size: 1.2em;
+            opacity: 0.95;
+        }
+
+        .section {
+            padding: 40px;
+        }
+
+        .section-alt {
+            background: #f8f9fa;
+        }
+
+        h2 {
+            color: #667eea;
+            font-size: 2em;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+
+        h3 {
+            color: #764ba2;
+            font-size: 1.5em;
+            margin: 30px 0 15px 0;
+        }
+
+        .winner-box {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin: 30px 0;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        .winner-box h2 {
+            color: white;
+            border-bottom: 3px solid white;
+            font-size: 2.5em;
+            text-align: center;
+        }
+
+        .winner-box p {
+            font-size: 1.3em;
+            text-align: center;
+            margin-top: 15px;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .metric-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+
+        .metric-card.winner {
+            border: 3px solid #38ef7d;
+            background: linear-gradient(135deg, #11998e15 0%, #38ef7d15 100%);
+        }
+
+        .metric-title {
+            font-size: 0.9em;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .metric-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #667eea;
+            margin: 10px 0;
+        }
+
+        .metric-card.winner .metric-value {
+            color: #11998e;
+        }
+
+        .metric-label {
+            font-size: 1.1em;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 30px 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .comparison-table thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .comparison-table th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+
+        .comparison-table td {
+            padding: 15px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .comparison-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+
+        .comparison-table .best {
+            background: #38ef7d20;
+            font-weight: bold;
+            color: #11998e;
+        }
+
+        .comparison-table .worst {
+            background: #ff6b6b20;
+            color: #c92a2a;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 400px;
+            margin: 30px 0;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .chart-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 30px;
+            margin: 30px 0;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            font-weight: 600;
+            margin: 0 5px;
+        }
+
+        .badge-success {
+            background: #38ef7d;
+            color: white;
+        }
+
+        .badge-warning {
+            background: #ffd93d;
+            color: #333;
+        }
+
+        .badge-danger {
+            background: #ff6b6b;
+            color: white;
+        }
+
+        .badge-info {
+            background: #667eea;
+            color: white;
+        }
+
+        .ranking-list {
+            list-style: none;
+            margin: 30px 0;
+        }
+
+        .ranking-item {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            padding: 25px;
+            margin: 20px 0;
+            transition: transform 0.3s;
+        }
+
+        .ranking-item:hover {
+            transform: translateX(10px);
+        }
+
+        .ranking-item.rank-1 {
+            border: 3px solid #38ef7d;
+            background: linear-gradient(to right, #11998e15 0%, #38ef7d15 100%);
+        }
+
+        .ranking-item.rank-2 {
+            border: 2px solid #667eea;
+        }
+
+        .ranking-number {
+            display: inline-block;
+            width: 50px;
+            height: 50px;
+            line-height: 50px;
+            text-align: center;
+            border-radius: 50%;
+            background: #667eea;
+            color: white;
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-right: 20px;
+        }
+
+        .rank-1 .ranking-number {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            font-size: 2em;
+        }
+
+        .ranking-content {
+            display: inline-block;
+            vertical-align: top;
+            width: calc(100% - 80px);
+        }
+
+        .ranking-title {
+            font-size: 1.5em;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .ranking-score {
+            font-size: 2em;
+            color: #667eea;
+            font-weight: bold;
+            margin-right: 20px;
+        }
+
+        .rank-1 .ranking-score {
+            color: #11998e;
+        }
+
+        .ranking-details {
+            color: #666;
+            margin-top: 10px;
+            font-size: 1.1em;
+        }
+
+        .alert {
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .alert-success {
+            background: #38ef7d20;
+            border-left: 5px solid #38ef7d;
+            color: #11998e;
+        }
+
+        .alert-warning {
+            background: #ffd93d20;
+            border-left: 5px solid #ffd93d;
+            color: #f59f00;
+        }
+
+        .alert-danger {
+            background: #ff6b6b20;
+            border-left: 5px solid #ff6b6b;
+            color: #c92a2a;
+        }
+
+        .alert-info {
+            background: #667eea20;
+            border-left: 5px solid #667eea;
+            color: #5f3dc4;
+        }
+
+        .pros-cons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .pros, .cons {
+            padding: 20px;
+            border-radius: 10px;
+        }
+
+        .pros {
+            background: #38ef7d15;
+            border: 2px solid #38ef7d;
+        }
+
+        .cons {
+            background: #ff6b6b15;
+            border: 2px solid #ff6b6b;
+        }
+
+        .pros h4, .cons h4 {
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+
+        .pros h4 {
+            color: #11998e;
+        }
+
+        .cons h4 {
+            color: #c92a2a;
+        }
+
+        .pros ul, .cons ul {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .pros li::before {
+            content: "✅ ";
+            margin-right: 10px;
+        }
+
+        .cons li::before {
+            content: "❌ ";
+            margin-right: 10px;
+        }
+
+        .pros li, .cons li {
+            margin: 10px 0;
+            font-size: 1.05em;
+        }
+
+        footer {
+            background: #2c3e50;
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        footer p {
+            margin: 5px 0;
+        }
+
+        @media (max-width: 768px) {
+            .chart-row {
+                grid-template-columns: 1fr;
+            }
+
+            .pros-cons {
+                grid-template-columns: 1fr;
+            }
+
+            header h1 {
+                font-size: 1.8em;
+            }
+
+            .section {
+                padding: 20px;
+            }
+        }
+
+        .insight-box {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .insight-box h4 {
+            font-size: 1.3em;
+            margin-bottom: 10px;
+        }
+
+        .config-card {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            margin: 20px 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .config-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .config-name {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .config-score {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #11998e;
+        }
+
+        .config-metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .config-metric {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .config-metric-label {
+            font-size: 0.85em;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+
+        .config-metric-value {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏆 Análisis Comparativo de Configuraciones de Bases</h1>
+            <p>Sistema de Homologación de Catálogo de Vehículos</p>
+            <p style="margin-top: 10px; font-size: 0.9em; opacity: 0.9;">Fecha: 15 de Octubre, 2025</p>
+        </header>
+
+        <!-- Executive Summary -->
+        <div class="section">
+            <div class="winner-box">
+                <h2>🏆 CONFIGURACIÓN GANADORA</h2>
+                <p style="font-size: 2em; margin: 20px 0;">ZURICH (Base Única)</p>
+                <p>Puntuación de Calidad: <strong style="font-size: 1.5em;">98.4/100</strong></p>
+                <p style="font-size: 1em; margin-top: 20px;">Empatada con ZURICH+HDI, pero con menor aislamiento y mayor cobertura promedio</p>
+            </div>
+
+            <div class="alert alert-success">
+                <h3 style="margin-bottom: 15px;">🎯 Hallazgo Principal</h3>
+                <p style="font-size: 1.15em; line-height: 1.8;">
+                    <strong>ZURICH como base única supera a las configuraciones multi-base</strong> en métricas clave de calidad.
+                    Logra el <strong>menor aislamiento (8.77%)</strong> y la <strong>mayor cobertura promedio (5.35 aseguradoras/registro)</strong>.
+                    Añadir más bases <strong>no mejora la calidad</strong>, sino que genera fragmentación.
+                </p>
+            </div>
+        </div>
+
+        <!-- Ranking -->
+        <div class="section section-alt">
+            <h2>📊 Ranking de Configuraciones</h2>
+
+            <ul class="ranking-list">
+                <li class="ranking-item rank-1">
+                    <span class="ranking-number">1</span>
+                    <div class="ranking-content">
+                        <div class="ranking-title">
+                            ZURICH (Base Única)
+                            <span class="badge badge-success">RECOMENDADO</span>
+                        </div>
+                        <div>
+                            <span class="ranking-score">98.4/100</span>
+                            <span class="badge badge-info">20,524 registros</span>
+                        </div>
+                        <div class="ranking-details">
+                            Aislamiento: 8.77% | Cobertura: 5.35 | Tier 2: 87.24% | Confianza: 0.8957
+                        </div>
+                    </div>
+                </li>
+
+                <li class="ranking-item rank-2">
+                    <span class="ranking-number">2</span>
+                    <div class="ranking-content">
+                        <div class="ranking-title">
+                            ZURICH + HDI
+                            <span class="badge badge-info">ALTERNATIVA VÁLIDA</span>
+                        </div>
+                        <div>
+                            <span class="ranking-score">98.4/100</span>
+                            <span class="badge badge-info">30,066 registros</span>
+                        </div>
+                        <div class="ranking-details">
+                            Overlap: 48.77% | Aislamiento: 14.46% | Cobertura: 4.90 | Tier 2: 85.38%
+                        </div>
+                    </div>
+                </li>
+
+                <li class="ranking-item">
+                    <span class="ranking-number">3</span>
+                    <div class="ranking-content">
+                        <div class="ranking-title">
+                            ZURICH + QUALITAS
+                            <span class="badge badge-warning">NO RECOMENDADO</span>
+                        </div>
+                        <div>
+                            <span class="ranking-score">90.9/100</span>
+                            <span class="badge badge-info">39,375 registros</span>
+                        </div>
+                        <div class="ranking-details">
+                            Overlap: 37.77% ⚠️ | Aislamiento: 23.32% | Cobertura: 4.15 | Tier 2: 82.23%
+                        </div>
+                    </div>
+                </li>
+
+                <li class="ranking-item">
+                    <span class="ranking-number">4</span>
+                    <div class="ranking-content">
+                        <div class="ranking-title">
+                            ZURICH + QUALITAS + HDI
+                            <span class="badge badge-danger">NO RECOMENDADO</span>
+                        </div>
+                        <div>
+                            <span class="ranking-score">83.9/100</span>
+                            <span class="badge badge-info">47,928 registros</span>
+                        </div>
+                        <div class="ranking-details">
+                            Overlap: 21.02% ❌ | Aislamiento: 24.45% | Cobertura: 4.04 | Tier 2: 81.56%
+                        </div>
+                    </div>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Comparison Table -->
+        <div class="section">
+            <h2>📋 Tabla Comparativa Detallada</h2>
+
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Métrica</th>
+                        <th>ZURICH</th>
+                        <th>ZURICH+HDI</th>
+                        <th>ZURICH+QUALITAS</th>
+                        <th>ZURICH+QUALITAS+HDI</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Puntuación Total</strong></td>
+                        <td class="best">98.4/100</td>
+                        <td class="best">98.4/100</td>
+                        <td>90.9/100</td>
+                        <td class="worst">83.9/100</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Total Registros</strong></td>
+                        <td>20,524</td>
+                        <td>30,066</td>
+                        <td>39,375</td>
+                        <td class="best">47,928</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Bases</strong></td>
+                        <td>ZURICH</td>
+                        <td>HDI+ZURICH</td>
+                        <td>QUALITAS+ZURICH</td>
+                        <td>HDI+QUALITAS+ZURICH</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Overlap Base (%)</strong></td>
+                        <td class="best">100.00%</td>
+                        <td class="best">48.77%</td>
+                        <td class="worst">37.77%</td>
+                        <td class="worst">21.02%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Tasa Aislamiento (%)</strong></td>
+                        <td class="best">8.77%</td>
+                        <td class="best">14.46%</td>
+                        <td class="worst">23.32%</td>
+                        <td class="worst">24.45%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Registros Aislados</strong></td>
+                        <td class="best">1,799</td>
+                        <td>4,349</td>
+                        <td class="worst">9,183</td>
+                        <td class="worst">11,719</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Cobertura Promedio</strong></td>
+                        <td class="best">5.35</td>
+                        <td class="best">4.90</td>
+                        <td>4.15</td>
+                        <td class="worst">4.04</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Tier 2 (Alta Confianza)</strong></td>
+                        <td class="best">87.24%</td>
+                        <td class="best">85.38%</td>
+                        <td>82.23%</td>
+                        <td class="worst">81.56%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Confianza Promedio</strong></td>
+                        <td class="best">0.8957</td>
+                        <td>0.8924</td>
+                        <td>0.8933</td>
+                        <td class="best">0.8956</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Charts Section -->
+        <div class="section section-alt">
+            <h2>📈 Análisis Visual</h2>
+
+            <div class="chart-row">
+                <div class="chart-container">
+                    <canvas id="qualityChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="isolationChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-row">
+                <div class="chart-container">
+                    <canvas id="coverageChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <canvas id="overlapChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container" style="height: 500px;">
+                <canvas id="radarChart"></canvas>
+            </div>
+
+            <div class="chart-container" style="height: 300px;">
+                <canvas id="recordsChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Detailed Analysis per Configuration -->
+        <div class="section">
+            <h2>🔍 Análisis Detallado por Configuración</h2>
+
+            <!-- ZURICH -->
+            <div class="config-card" style="border: 3px solid #38ef7d;">
+                <div class="config-header">
+                    <div>
+                        <div class="config-name">1. ZURICH (Base Única)</div>
+                        <span class="badge badge-success" style="font-size: 1.1em;">RECOMENDADO</span>
+                    </div>
+                    <div class="config-score">98.4</div>
+                </div>
+
+                <div class="config-metrics">
+                    <div class="config-metric">
+                        <div class="config-metric-label">Registros</div>
+                        <div class="config-metric-value">20,524</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Aislamiento</div>
+                        <div class="config-metric-value" style="color: #38ef7d;">8.77%</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Cobertura</div>
+                        <div class="config-metric-value" style="color: #38ef7d;">5.35</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Tier 2</div>
+                        <div class="config-metric-value" style="color: #38ef7d;">87.24%</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Confianza</div>
+                        <div class="config-metric-value" style="color: #38ef7d;">0.8957</div>
+                    </div>
+                </div>
+
+                <div class="pros-cons">
+                    <div class="pros">
+                        <h4>✅ Fortalezas</h4>
+                        <ul>
+                            <li><strong>Mínimo aislamiento</strong>: 8.77% (mejor de todas)</li>
+                            <li><strong>Máxima cobertura promedio</strong>: 5.35 aseguradoras/registro</li>
+                            <li><strong>Mayor Tier 2</strong>: 87.24% matches alta confianza</li>
+                            <li><strong>Mayor confianza</strong>: 0.8957</li>
+                            <li><strong>Catálogo más limpio</strong>: Sin duplicaciones</li>
+                            <li><strong>Mantenimiento simple</strong>: Una sola nomenclatura</li>
+                        </ul>
+                    </div>
+                    <div class="cons">
+                        <h4>⚠️ Consideraciones</h4>
+                        <ul>
+                            <li>Menor cantidad de registros totales (20,524)</li>
+                            <li>Puede faltar cobertura de vehículos únicos de otras aseguradoras</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="alert alert-success">
+                    <strong>💡 Interpretación:</strong> ZURICH tiene el catálogo más limpio y mejor normalizado.
+                    Al usarlo como única base, el sistema logra la máxima eficiencia de matching con otras aseguradoras
+                    sin conflictos que generen duplicaciones.
+                </div>
+            </div>
+
+            <!-- ZURICH+HDI -->
+            <div class="config-card" style="border: 2px solid #667eea;">
+                <div class="config-header">
+                    <div>
+                        <div class="config-name">2. ZURICH + HDI</div>
+                        <span class="badge badge-info" style="font-size: 1.1em;">ALTERNATIVA VÁLIDA</span>
+                    </div>
+                    <div class="config-score">98.4</div>
+                </div>
+
+                <div class="config-metrics">
+                    <div class="config-metric">
+                        <div class="config-metric-label">Registros</div>
+                        <div class="config-metric-value">30,066</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Overlap Base</div>
+                        <div class="config-metric-value" style="color: #38ef7d;">48.77%</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Aislamiento</div>
+                        <div class="config-metric-value">14.46%</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Cobertura</div>
+                        <div class="config-metric-value">4.90</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Tier 2</div>
+                        <div class="config-metric-value">85.38%</div>
+                    </div>
+                </div>
+
+                <div class="pros-cons">
+                    <div class="pros">
+                        <h4>✅ Fortalezas</h4>
+                        <ul>
+                            <li><strong>Overlap perfecto</strong>: 48.77% (rango óptimo 45-55%)</li>
+                            <li><strong>Mantiene calidad</strong>: 98.4/100 (empate con ZURICH)</li>
+                            <li><strong>Mayor cobertura de mercado</strong>: +46% registros vs ZURICH</li>
+                            <li><strong>HDI complementa bien</strong>: 9,542 vehículos únicos</li>
+                            <li><strong>Aislamiento controlado</strong>: 14.46%</li>
+                        </ul>
+                    </div>
+                    <div class="cons">
+                        <h4>⚠️ Consideraciones</h4>
+                        <ul>
+                            <li>Más registros aislados que ZURICH solo (4,349 vs 1,799)</li>
+                            <li>Cobertura promedio ligeramente menor (4.90 vs 5.35)</li>
+                            <li>Mantenimiento más complejo (2 nomenclaturas)</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="alert alert-info">
+                    <strong>💡 Interpretación:</strong> ZURICH+HDI es la mejor configuración multi-base.
+                    El overlap de 48.77% está perfectamente en el rango objetivo. HDI complementa bien a ZURICH
+                    con vehículos únicos pero sin generar conflictos masivos.
+                </div>
+            </div>
+
+            <!-- ZURICH+QUALITAS -->
+            <div class="config-card" style="border: 2px solid #ffd93d;">
+                <div class="config-header">
+                    <div>
+                        <div class="config-name">3. ZURICH + QUALITAS</div>
+                        <span class="badge badge-warning" style="font-size: 1.1em;">NO RECOMENDADO</span>
+                    </div>
+                    <div class="config-score" style="color: #f59f00;">90.9</div>
+                </div>
+
+                <div class="config-metrics">
+                    <div class="config-metric">
+                        <div class="config-metric-label">Registros</div>
+                        <div class="config-metric-value">39,375</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Overlap Base</div>
+                        <div class="config-metric-value" style="color: #f59f00;">37.77%</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Aislamiento</div>
+                        <div class="config-metric-value" style="color: #f59f00;">23.32%</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Cobertura</div>
+                        <div class="config-metric-value">4.15</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Tier 2</div>
+                        <div class="config-metric-value">82.23%</div>
+                    </div>
+                </div>
+
+                <div class="pros-cons">
+                    <div class="pros">
+                        <h4>✅ Fortalezas</h4>
+                        <ul>
+                            <li>Gran cantidad de registros: 39,375 (+91% vs ZURICH)</li>
+                            <li>Buena confianza promedio: 0.8933</li>
+                            <li>Cobertura aceptable: 4.15 aseguradoras/registro</li>
+                        </ul>
+                    </div>
+                    <div class="cons">
+                        <h4>❌ Debilidades Críticas</h4>
+                        <ul>
+                            <li><strong>Overlap bajo</strong>: 37.77% (por debajo del 45% objetivo)</li>
+                            <li><strong>Alto aislamiento</strong>: 23.32% (9,183 registros)</li>
+                            <li><strong>QUALITAS aislada</strong>: 7,301 registros (79.5% del aislamiento)</li>
+                            <li><strong>Menor Tier 2</strong>: 82.23%</li>
+                            <li><strong>Calidad degradada</strong>: 90.9 vs 98.4</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="alert alert-warning">
+                    <strong>⚠️ Interpretación:</strong> QUALITAS tiene un catálogo muy diferente a ZURICH,
+                    con solo 37.77% de overlap. Esto genera 9,183 registros aislados (23.32%), principalmente de QUALITAS.
+                    Indica que QUALITAS usa nomenclatura muy diferente o tiene muchos vehículos únicos.
+                </div>
+            </div>
+
+            <!-- ZURICH+QUALITAS+HDI -->
+            <div class="config-card" style="border: 2px solid #ff6b6b;">
+                <div class="config-header">
+                    <div>
+                        <div class="config-name">4. ZURICH + QUALITAS + HDI</div>
+                        <span class="badge badge-danger" style="font-size: 1.1em;">NO RECOMENDADO</span>
+                    </div>
+                    <div class="config-score" style="color: #c92a2a;">83.9</div>
+                </div>
+
+                <div class="config-metrics">
+                    <div class="config-metric">
+                        <div class="config-metric-label">Registros</div>
+                        <div class="config-metric-value" style="color: #38ef7d;">47,928</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Overlap Base</div>
+                        <div class="config-metric-value" style="color: #c92a2a;">21.02%</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Aislamiento</div>
+                        <div class="config-metric-value" style="color: #c92a2a;">24.45%</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Cobertura</div>
+                        <div class="config-metric-value" style="color: #c92a2a;">4.04</div>
+                    </div>
+                    <div class="config-metric">
+                        <div class="config-metric-label">Tier 2</div>
+                        <div class="config-metric-value" style="color: #c92a2a;">81.56%</div>
+                    </div>
+                </div>
+
+                <div class="pros-cons">
+                    <div class="pros">
+                        <h4>✅ Fortalezas</h4>
+                        <ul>
+                            <li><strong>Máxima cantidad de registros</strong>: 47,928 (cobertura total de mercado)</li>
+                            <li>Confianza alta: 0.8956</li>
+                        </ul>
+                    </div>
+                    <div class="cons">
+                        <h4>❌ Debilidades Críticas</h4>
+                        <ul>
+                            <li><strong>Overlap crítico</strong>: 21.02% (solo 1 de 5 vehículos en las 3 bases)</li>
+                            <li><strong>Fragmentación severa</strong>: 11,719 registros aislados (24.45%)</li>
+                            <li><strong>Calidad más baja</strong>: 83.9/100</li>
+                            <li><strong>Menor cobertura promedio</strong>: 4.04</li>
+                            <li><strong>Menor Tier 2</strong>: 81.56%</li>
+                            <li><strong>Complejidad extrema</strong>: Mantener 3 nomenclaturas</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="alert alert-danger">
+                    <strong>❌ Interpretación:</strong> Usar 3 bases genera conflictos masivos.
+                    Solo el 21.02% de los registros están en las 3 bases simultáneamente.
+                    La fragmentación aumenta dramáticamente: 11,719 registros aislados (24.45%).
+                    El sistema tiene dificultades para reconciliar 3 nomenclaturas diferentes.
+                    <strong>NO recomendado para producción.</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- Component Scores Breakdown -->
+        <div class="section section-alt">
+            <h2>🎯 Desglose de Puntuaciones por Componente</h2>
+
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-title">Overlap Score (25%)</div>
+                    <div class="metric-label">ZURICH</div>
+                    <div class="metric-value">100.0</div>
+                </div>
+                <div class="metric-card winner">
+                    <div class="metric-title">Overlap Score (25%)</div>
+                    <div class="metric-label">ZURICH+HDI</div>
+                    <div class="metric-value">100.0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Overlap Score (25%)</div>
+                    <div class="metric-label">ZURICH+QUALITAS</div>
+                    <div class="metric-value" style="color: #f59f00;">70.0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Overlap Score (25%)</div>
+                    <div class="metric-label">3 Bases</div>
+                    <div class="metric-value" style="color: #c92a2a;">42.0</div>
+                </div>
+            </div>
+
+            <p style="font-size: 1.1em; margin: 20px 0; color: #666;">
+                <strong>Análisis:</strong> El Overlap Score es donde QUALITAS y 3 bases fallan.
+                ZURICH+HDI mantiene 100/100 con overlap de 48.77% (perfecto).
+                ZURICH+QUALITAS cae a 70/100 (overlap 37.77% < 45% target).
+                3 bases obtiene solo 42/100 (overlap crítico 21.02%).
+            </p>
+
+            <div class="chart-container">
+                <canvas id="componentScoresChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Key Insights -->
+        <div class="section">
+            <h2>💡 Insights Estratégicos Clave</h2>
+
+            <div class="insight-box">
+                <h4>🔑 Insight #1: La Paradoja del Tamaño</h4>
+                <p style="font-size: 1.1em; line-height: 1.8;">
+                    <strong>Más registros NO significa mejor catálogo.</strong>
+                    ZURICH solo tiene 58% menos registros que 3 bases (20,524 vs 47,928),
+                    pero cada registro de ZURICH es <strong>32% más compatible</strong> (5.35 vs 4.04 cobertura).
+                    3 bases pierde <strong>14.5 puntos de calidad</strong> (83.9 vs 98.4).
+                </p>
+            </div>
+
+            <div class="insight-box" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                <h4>🔑 Insight #2: ZURICH es la Base Óptima</h4>
+                <p style="font-size: 1.1em; line-height: 1.8;">
+                    ZURICH tiene la <strong>nomenclatura más estandarizada</strong> y la
+                    <strong>mayor compatibilidad con el mercado</strong>.
+                    Logra 5.35 aseguradoras/registro promedio, indicando que sus registros son
+                    reconocidos por más aseguradoras que cualquier otra configuración.
+                </p>
+            </div>
+
+            <div class="insight-box" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);">
+                <h4>🔑 Insight #3: HDI es el Mejor Complemento</h4>
+                <p style="font-size: 1.1em; line-height: 1.8;">
+                    HDI es el único complemento viable para ZURICH.
+                    Mantiene <strong>overlap perfecto (48.77%)</strong> y
+                    <strong>no degrada la calidad</strong> (98.4/100).
+                    Aporta 9,542 vehículos únicos legítimos sin generar conflictos masivos.
+                </p>
+            </div>
+
+            <div class="insight-box" style="background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);">
+                <h4>🔑 Insight #4: QUALITAS Tiene Incompatibilidades</h4>
+                <p style="font-size: 1.1em; line-height: 1.8;">
+                    QUALITAS muestra <strong>solo 37.77% de overlap</strong> con ZURICH y genera
+                    <strong>7,301 registros aislados</strong> (79.5% del aislamiento total en ZURICH+QUALITAS).
+                    Esto indica nomenclatura muy diferente o estructura de catálogo incompatible.
+                </p>
+            </div>
+
+            <div class="insight-box" style="background: linear-gradient(135deg, #ff6b6b 0%, #c92a2a 100%);">
+                <h4>🔑 Insight #5: Múltiples Bases Generan Fragmentación</h4>
+                <p style="font-size: 1.1em; line-height: 1.8;">
+                    Patrón claro identificado: <strong>Más bases → Menos overlap → Más aislamiento → Menor calidad</strong>.
+                    1 base: 100% overlap, 8.77% aislamiento, 98.4 calidad.
+                    2 bases (Z+H): 48.77% overlap, 14.46% aislamiento, 98.4 calidad.
+                    3 bases: <strong>21.02% overlap, 24.45% aislamiento, 83.9 calidad</strong>.
+                </p>
+            </div>
+        </div>
+
+        <!-- Recommendations -->
+        <div class="section section-alt">
+            <h2>✅ Recomendaciones de Implementación</h2>
+
+            <div class="alert alert-success">
+                <h3>🏆 Recomendación Principal: ZURICH Base Única</h3>
+                <p style="font-size: 1.15em; line-height: 1.8; margin-top: 10px;">
+                    <strong>Implementar ZURICH como única base inmediatamente.</strong>
+                    Ofrece la mejor combinación de calidad (98.4/100),
+                    mínimo aislamiento (8.77%), y máxima cobertura promedio (5.35).
+                    Catálogo compacto y mantenible con 20,524 registros de alta calidad.
+                </p>
+            </div>
+
+            <h3>📋 Plan de Implementación por Fases</h3>
+
+            <div class="config-card">
+                <h4 style="color: #11998e; font-size: 1.4em; margin-bottom: 15px;">Fase 1: ZURICH Solo (INMEDIATO)</h4>
+                <ol style="font-size: 1.1em; line-height: 1.8; margin-left: 20px;">
+                    <li><strong>Desplegar con ZURICH como única base</strong></li>
+                    <li>Validar calidad en producción (objetivo: mantener 98.4/100)</li>
+                    <li>Monitorear cobertura (5.35 promedio)</li>
+                    <li>Identificar gaps de mercado (vehículos críticos faltantes)</li>
+                    <li>Recopilar feedback de usuarios y clientes</li>
+                </ol>
+            </div>
+
+            <div class="config-card">
+                <h4 style="color: #667eea; font-size: 1.4em; margin-bottom: 15px;">Fase 2: Evaluación de HDI (OPCIONAL - 3 meses después)</h4>
+                <p style="font-size: 1.05em; margin-bottom: 15px;"><strong>Solo si el análisis de Fase 1 muestra:</strong></p>
+                <ul style="font-size: 1.1em; line-height: 1.8; margin-left: 20px;">
+                    <li>Vehículos críticos faltantes que HDI tiene</li>
+                    <li>Demanda de mercado por >20K registros</li>
+                    <li>Necesidad de cobertura adicional específica</li>
+                </ul>
+                <p style="font-size: 1.05em; margin-top: 15px;"><strong>Entonces considerar:</strong></p>
+                <ol style="font-size: 1.1em; line-height: 1.8; margin-left: 20px;">
+                    <li>Añadir HDI como segunda base</li>
+                    <li>Validar que overlap se mantiene ~48-50%</li>
+                    <li>Verificar que calidad permanece en 98+</li>
+                    <li>Monitorear aislamiento (debe mantenerse <15%)</li>
+                </ol>
+            </div>
+
+            <div class="config-card" style="border: 2px solid #ff6b6b;">
+                <h4 style="color: #c92a2a; font-size: 1.4em; margin-bottom: 15px;">❌ Fase 3: NO Añadir QUALITAS como Base</h4>
+                <div class="alert alert-danger">
+                    <p style="font-size: 1.1em; line-height: 1.8;">
+                        <strong>QUALITAS NO debe usarse como base</strong> debido a:
+                    </p>
+                    <ul style="font-size: 1.05em; margin: 15px 0 15px 20px; line-height: 1.8;">
+                        <li>Overlap bajo con ZURICH (37.77%)</li>
+                        <li>Alta fragmentación (7,301 aislados)</li>
+                        <li>Degradación de calidad (90.9 vs 98.4)</li>
+                    </ul>
+                    <p style="font-size: 1.1em; line-height: 1.8; margin-top: 15px;">
+                        <strong>Alternativa recomendada:</strong>
+                    </p>
+                    <ul style="font-size: 1.05em; margin: 10px 0 0 20px; line-height: 1.8;">
+                        <li>QUALITAS participa como <strong>aseguradora secundaria</strong></li>
+                        <li>Hace match con registros existentes de ZURICH/HDI</li>
+                        <li>Solo crear registros QUALITAS nuevos si no hay match viable</li>
+                        <li>NO crear registros base desde QUALITAS</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="alert alert-danger">
+                <h4>🚫 Prohibido: 3 Bases Simultáneas</h4>
+                <p style="font-size: 1.15em; line-height: 1.8;">
+                    <strong>NUNCA usar ZURICH+QUALITAS+HDI como configuración de bases.</strong>
+                    La fragmentación es crítica (21.02% overlap), la calidad cae a 83.9/100,
+                    y el mantenimiento se vuelve inmanejable.
+                    Más bases NO significa mejor sistema.
+                </p>
+            </div>
+        </div>
+
+        <!-- Technical Metrics -->
+        <div class="section">
+            <h2>📊 Métricas Técnicas Detalladas</h2>
+
+            <h3>Distribución de Tier por Configuración</h3>
+
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Tier</th>
+                        <th>ZURICH</th>
+                        <th>ZURICH+HDI</th>
+                        <th>ZURICH+QUALITAS</th>
+                        <th>ZURICH+QUALITAS+HDI</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Tier 0 (Original)</strong></td>
+                        <td>13.22%</td>
+                        <td>13.17%</td>
+                        <td>12.91%</td>
+                        <td>12.66%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Tier 1 (Exact)</strong></td>
+                        <td>0.23%</td>
+                        <td>0.23%</td>
+                        <td>0.18%</td>
+                        <td>0.15%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Tier 2 (High)</strong></td>
+                        <td class="best">87.24%</td>
+                        <td class="best">85.38%</td>
+                        <td>82.23%</td>
+                        <td class="worst">81.56%</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Tier 3 (Medium)</strong></td>
+                        <td class="best">1.31%</td>
+                        <td class="best">1.22%</td>
+                        <td class="worst">4.68%</td>
+                        <td class="worst">5.63%</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <p style="font-size: 1.1em; margin: 20px 0; color: #666;">
+                <strong>Patrón identificado:</strong> Más bases → Más Tier 3 (matches de menor confianza).
+                ZURICH solo tiene el mayor porcentaje de Tier 2 (87.24%) y el menor de Tier 3 (1.31%).
+            </p>
+
+            <h3>Análisis de Aislamiento por Base</h3>
+
+            <div class="chart-container">
+                <canvas id="isolationBreakdownChart"></canvas>
+            </div>
+
+            <div class="metrics-grid" style="margin-top: 30px;">
+                <div class="metric-card winner">
+                    <div class="metric-title">ZURICH Consistente</div>
+                    <div class="metric-value">~1,800</div>
+                    <div class="metric-label">Registros aislados en todas las configs</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">HDI Añade</div>
+                    <div class="metric-value">~2,500</div>
+                    <div class="metric-label">Registros aislados únicos</div>
+                </div>
+                <div class="metric-card" style="border-color: #ff6b6b;">
+                    <div class="metric-title">QUALITAS Añade</div>
+                    <div class="metric-value" style="color: #c92a2a;">~7,300</div>
+                    <div class="metric-label">Registros aislados únicos</div>
+                </div>
+                <div class="metric-card" style="border-color: #ff6b6b;">
+                    <div class="metric-title">Efecto Aditivo</div>
+                    <div class="metric-value" style="color: #c92a2a;">NO</div>
+                    <div class="metric-label">Multi-base suma aislamientos sin reducirlos</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Conclusion -->
+        <div class="section section-alt">
+            <h2>🎯 Conclusión Final</h2>
+
+            <div class="winner-box">
+                <h2>Decisión Ejecutiva</h2>
+                <p style="font-size: 1.8em; margin: 20px 0;"><strong>USAR ZURICH COMO ÚNICA BASE</strong></p>
+            </div>
+
+            <div class="config-card">
+                <h3 style="color: #11998e;">Justificación Técnica</h3>
+                <ol style="font-size: 1.15em; line-height: 2; margin: 20px 0 20px 30px;">
+                    <li><strong>Calidad máxima:</strong> 98.4/100</li>
+                    <li><strong>Aislamiento mínimo:</strong> 8.77% (3x mejor que 3 bases)</li>
+                    <li><strong>Cobertura promedio máxima:</strong> 5.35 aseguradoras/registro</li>
+                    <li><strong>Tier 2 máximo:</strong> 87.24% matches de alta confianza</li>
+                    <li><strong>Catálogo más limpio:</strong> Sin duplicaciones por nomenclatura</li>
+                    <li><strong>Mantenimiento simple:</strong> Una sola base de referencia</li>
+                    <li><strong>Mejor experiencia de usuario:</strong> Menos resultados duplicados</li>
+                </ol>
+            </div>
+
+            <div class="alert alert-info">
+                <h4 style="margin-bottom: 15px;">Si Se Necesita Más Cobertura</h4>
+                <ul style="font-size: 1.1em; line-height: 1.8; margin-left: 20px;">
+                    <li>✅ Considerar añadir HDI (mantiene 98.4 calidad, overlap 48.77%)</li>
+                    <li>❌ NO usar QUALITAS como base (degrada calidad a 90.9)</li>
+                    <li>❌ NUNCA usar 3 bases simultáneas (calidad cae a 83.9)</li>
+                </ul>
+            </div>
+
+            <div class="insight-box" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); margin-top: 30px;">
+                <h4>🎯 Mensaje Clave para Stakeholders</h4>
+                <p style="font-size: 1.3em; line-height: 1.8; text-align: center;">
+                    "En sistemas de homologación, <strong>menos es más</strong>.
+                    ZURICH solo supera a configuraciones con 2.3x más registros
+                    porque la <strong>calidad y compatibilidad importan más que la cantidad</strong>."
+                </p>
+            </div>
+        </div>
+
+        <footer>
+            <p style="font-size: 1.2em; font-weight: bold; margin-bottom: 10px;">
+                Sistema de Homologación de Catálogo de Vehículos
+            </p>
+            <p>Análisis Comparativo de Configuraciones de Bases</p>
+            <p>Fecha: 15 de Octubre, 2025</p>
+            <p style="margin-top: 15px; opacity: 0.8;">
+                Generado por: compare_base_configurations.py
+            </p>
+            <p style="margin-top: 10px; font-size: 0.9em; opacity: 0.7;">
+                Configuraciones analizadas: 4 | Registros totales: 137,893
+            </p>
+        </footer>
+    </div>
+
+    <script>
+        // Chart.js Configuration
+        const chartColors = {
+            zurich: '#11998e',
+            zurichHDI: '#667eea',
+            zurichQualitas: '#f59f00',
+            threeBases: '#c92a2a',
+            success: '#38ef7d',
+            warning: '#ffd93d',
+            danger: '#ff6b6b'
+        };
+
+        // Quality Score Chart
+        const qualityCtx = document.getElementById('qualityChart').getContext('2d');
+        new Chart(qualityCtx, {
+            type: 'bar',
+            data: {
+                labels: ['ZURICH', 'ZURICH+HDI', 'ZURICH+QUALITAS', 'ZURICH+QUALITAS+HDI'],
+                datasets: [{
+                    label: 'Puntuación de Calidad',
+                    data: [98.4, 98.4, 90.9, 83.9],
+                    backgroundColor: [
+                        chartColors.zurich,
+                        chartColors.zurichHDI,
+                        chartColors.zurichQualitas,
+                        chartColors.threeBases
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Puntuación de Calidad por Configuración',
+                        font: { size: 18, weight: 'bold' }
+                    },
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        title: { display: true, text: 'Puntuación (0-100)' }
+                    }
+                }
+            }
+        });
+
+        // Isolation Rate Chart
+        const isolationCtx = document.getElementById('isolationChart').getContext('2d');
+        new Chart(isolationCtx, {
+            type: 'bar',
+            data: {
+                labels: ['ZURICH', 'ZURICH+HDI', 'ZURICH+QUALITAS', 'ZURICH+QUALITAS+HDI'],
+                datasets: [{
+                    label: 'Tasa de Aislamiento (%)',
+                    data: [8.77, 14.46, 23.32, 24.45],
+                    backgroundColor: [
+                        chartColors.success,
+                        chartColors.zurich,
+                        chartColors.warning,
+                        chartColors.danger
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Tasa de Aislamiento (menor es mejor)',
+                        font: { size: 18, weight: 'bold' }
+                    },
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 30,
+                        title: { display: true, text: 'Porcentaje (%)' }
+                    }
+                }
+            }
+        });
+
+        // Coverage Chart
+        const coverageCtx = document.getElementById('coverageChart').getContext('2d');
+        new Chart(coverageCtx, {
+            type: 'bar',
+            data: {
+                labels: ['ZURICH', 'ZURICH+HDI', 'ZURICH+QUALITAS', 'ZURICH+QUALITAS+HDI'],
+                datasets: [{
+                    label: 'Cobertura Promedio',
+                    data: [5.35, 4.90, 4.15, 4.04],
+                    backgroundColor: [
+                        chartColors.success,
+                        chartColors.zurich,
+                        chartColors.zurichQualitas,
+                        chartColors.threeBases
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Cobertura Promedio (aseguradoras/registro)',
+                        font: { size: 18, weight: 'bold' }
+                    },
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 6,
+                        title: { display: true, text: 'Aseguradoras por Registro' }
+                    }
+                }
+            }
+        });
+
+        // Overlap Chart
+        const overlapCtx = document.getElementById('overlapChart').getContext('2d');
+        new Chart(overlapCtx, {
+            type: 'bar',
+            data: {
+                labels: ['ZURICH', 'ZURICH+HDI', 'ZURICH+QUALITAS', 'ZURICH+QUALITAS+HDI'],
+                datasets: [{
+                    label: 'Overlap entre Bases (%)',
+                    data: [100.00, 48.77, 37.77, 21.02],
+                    backgroundColor: [
+                        chartColors.success,
+                        chartColors.success,
+                        chartColors.warning,
+                        chartColors.danger
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Overlap entre Bases (mayor es mejor)',
+                        font: { size: 18, weight: 'bold' }
+                    },
+                    legend: { display: false },
+                    annotation: {
+                        annotations: [{
+                            type: 'line',
+                            yMin: 45,
+                            yMax: 45,
+                            borderColor: 'green',
+                            borderWidth: 2,
+                            borderDash: [5, 5],
+                            label: {
+                                content: 'Target Mínimo: 45%',
+                                enabled: true
+                            }
+                        }]
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        title: { display: true, text: 'Porcentaje (%)' }
+                    }
+                }
+            }
+        });
+
+        // Radar Chart
+        const radarCtx = document.getElementById('radarChart').getContext('2d');
+        new Chart(radarCtx, {
+            type: 'radar',
+            data: {
+                labels: ['Calidad Total', 'Overlap Base', 'Control Aislamiento', 'Cobertura', 'Confianza'],
+                datasets: [
+                    {
+                        label: 'ZURICH',
+                        data: [98.4, 100, 91.23, 100, 89.6],
+                        backgroundColor: 'rgba(17, 153, 142, 0.2)',
+                        borderColor: chartColors.zurich,
+                        pointBackgroundColor: chartColors.zurich,
+                        borderWidth: 3
+                    },
+                    {
+                        label: 'ZURICH+HDI',
+                        data: [98.4, 100, 85.54, 100, 89.2],
+                        backgroundColor: 'rgba(102, 126, 234, 0.2)',
+                        borderColor: chartColors.zurichHDI,
+                        pointBackgroundColor: chartColors.zurichHDI,
+                        borderWidth: 2
+                    },
+                    {
+                        label: 'ZURICH+QUALITAS',
+                        data: [90.9, 70, 76.68, 100, 89.3],
+                        backgroundColor: 'rgba(245, 159, 0, 0.2)',
+                        borderColor: chartColors.zurichQualitas,
+                        pointBackgroundColor: chartColors.zurichQualitas,
+                        borderWidth: 2
+                    },
+                    {
+                        label: 'ZURICH+QUALITAS+HDI',
+                        data: [83.9, 42, 75.55, 100, 89.6],
+                        backgroundColor: 'rgba(201, 42, 42, 0.2)',
+                        borderColor: chartColors.threeBases,
+                        pointBackgroundColor: chartColors.threeBases,
+                        borderWidth: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Comparación Multi-dimensional de Configuraciones',
+                        font: { size: 18, weight: 'bold' }
+                    }
+                },
+                scales: {
+                    r: {
+                        beginAtZero: true,
+                        max: 100
+                    }
+                }
+            }
+        });
+
+        // Records Chart
+        const recordsCtx = document.getElementById('recordsChart').getContext('2d');
+        new Chart(recordsCtx, {
+            type: 'bar',
+            data: {
+                labels: ['ZURICH', 'ZURICH+HDI', 'ZURICH+QUALITAS', 'ZURICH+QUALITAS+HDI'],
+                datasets: [{
+                    label: 'Total Registros',
+                    data: [20524, 30066, 39375, 47928],
+                    backgroundColor: [
+                        chartColors.zurich,
+                        chartColors.zurichHDI,
+                        chartColors.zurichQualitas,
+                        chartColors.threeBases
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Cantidad Total de Registros (más NO es mejor)',
+                        font: { size: 18, weight: 'bold' }
+                    },
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Número de Registros' }
+                    }
+                }
+            }
+        });
+
+        // Component Scores Chart
+        const componentCtx = document.getElementById('componentScoresChart').getContext('2d');
+        new Chart(componentCtx, {
+            type: 'bar',
+            data: {
+                labels: ['Overlap Score', 'Isolation Score', 'Coverage Score', 'Confidence Score', 'Tier 2 Score'],
+                datasets: [
+                    {
+                        label: 'ZURICH',
+                        data: [100, 100, 100, 89.6, 100],
+                        backgroundColor: chartColors.zurich
+                    },
+                    {
+                        label: 'ZURICH+HDI',
+                        data: [100, 100, 100, 89.2, 100],
+                        backgroundColor: chartColors.zurichHDI
+                    },
+                    {
+                        label: 'ZURICH+QUALITAS',
+                        data: [70, 100, 100, 89.3, 100],
+                        backgroundColor: chartColors.zurichQualitas
+                    },
+                    {
+                        label: 'ZURICH+QUALITAS+HDI',
+                        data: [42, 100, 100, 89.6, 100],
+                        backgroundColor: chartColors.threeBases
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Desglose de Puntuaciones por Componente',
+                        font: { size: 18, weight: 'bold' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 100,
+                        title: { display: true, text: 'Puntuación (0-100)' }
+                    }
+                }
+            }
+        });
+
+        // Isolation Breakdown Chart
+        const isolationBreakdownCtx = document.getElementById('isolationBreakdownChart').getContext('2d');
+        new Chart(isolationBreakdownCtx, {
+            type: 'bar',
+            data: {
+                labels: ['ZURICH', 'ZURICH+HDI', 'ZURICH+QUALITAS', 'ZURICH+QUALITAS+HDI'],
+                datasets: [
+                    {
+                        label: 'ZURICH Aislado',
+                        data: [1799, 1799, 1882, 1799],
+                        backgroundColor: chartColors.zurich
+                    },
+                    {
+                        label: 'HDI Aislado',
+                        data: [0, 2550, 0, 2547],
+                        backgroundColor: chartColors.zurichHDI
+                    },
+                    {
+                        label: 'QUALITAS Aislado',
+                        data: [0, 0, 7301, 7373],
+                        backgroundColor: chartColors.zurichQualitas
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: 'Desglose de Aislamiento por Base',
+                        font: { size: 18, weight: 'bold' }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        stacked: true,
+                        title: { display: true, text: 'Registros Aislados' }
+                    },
+                    x: {
+                        stacked: true
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>

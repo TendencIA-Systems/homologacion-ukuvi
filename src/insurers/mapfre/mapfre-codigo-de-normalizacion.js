@@ -1,30 +1,742 @@
 /**
- * MAPFRE ETL - Normalization Code Node
- *
- * Mirrors the Zurich/Qualitas/Atlas pattern while handling MAPFRE's comma-separated specs:
- * - Splits `version_original` slots (trim, engine config, displacement, horsepower, doors, transmission, extras).
- * - Infers transmission codes (AUT, STD, CVT, DSG, etc.) when the `transmision` field is empty.
- * - Preserves hyphenated trims (A-SPEC, S-LINE, TYPE-S) before cleaning and restores them afterward.
- * - Normalizes compact engine tokens such as `1.0T` -> `1.0L TURBO` and converts horsepower/door counts.
- * - Strips comfort/audio tokens while keeping the commercial hash inputs and a clean `version_limpia`.
- *
- * Use inside an n8n Code node. Emits a flat array of `{ json }`; validation issues
- * appear with `{ error: true }` so downstream nodes can log or branch.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MAPFRE ETL - CÓDIGO DE NORMALIZACIÓN V2.4 FIXED
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FIXES V2.4:
+ * - Agregar normalización de PLAZAS y PASAJEROS a OCUPANTES
+ * - Proteger tokens de versión como T5, T6, T7, T8, T9 (trims/versiones)
+ * - Agregar RIN (español) a tokens irrelevantes
+ * - Agregar AM y FM a tokens de audio irrelevantes
+ * - Agregar GEARTR, GEARTRONIC a normalizaciones de transmisión automática
+ * - Mejorar extracción de ocupantes para incluir todas las variantes
+ * ═══════════════════════════════════════════════════════════════════════════
  */
+
 const crypto = require("crypto");
 
 const BATCH_SIZE = 5000;
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CATÁLOGO MAESTRO COMPLETO
+// ═══════════════════════════════════════════════════════════════════════════
+const CATALOGO_MAESTRO_MARCAS_MODELOS = {
+  ACURA: [
+    "ADX",
+    "ILX",
+    "INTEGRA",
+    "MDX",
+    "NSX",
+    "RDX",
+    "RL",
+    "RLX",
+    "TL",
+    "TLX",
+    "TSX",
+    "ZDX",
+  ],
+  VOLKSWAGEN: [
+    "AMAROK",
+    "AMAROK ENTRY",
+    "ARTEON",
+    "ATLAS",
+    "BEETLE",
+    "BORA",
+    "CADDY",
+    "CC",
+    "CLASICO",
+    "CRAFTER",
+    "CROSSFOX",
+    "DERBY",
+    "EOS",
+    "EUROVAN",
+    "GOLF",
+    "GTI",
+    "JETTA",
+    "PASSAT",
+    "POINTER",
+    "POLO",
+    "RABBIT",
+    "ROUTAN",
+    "SAVEIRO",
+    "SEDAN",
+    "SHARAN",
+    "T-CROSS",
+    "TAOS",
+    "TERAMONT",
+    "TIGUAN",
+    "TOUAREG",
+    "TRANSPORTER",
+    "UP",
+    "VENTO",
+    "VIRTUS",
+  ],
+  JMC: ["BLACK", "EV BLACK", "GRAND AVENUE", "VIGUS", "VIGUS 3"],
+  VOLVO: [
+    "C30",
+    "C40",
+    "C70",
+    "EX30",
+    "EX90",
+    "S40",
+    "S60",
+    "S70",
+    "S80",
+    "S90",
+    "V40",
+    "V50",
+    "V60",
+    "V70",
+    "V90",
+    "XC40",
+    "XC60",
+    "XC70",
+    "XC90",
+  ],
+  TOYOTA: [
+    "4RUNNER",
+    "AVANZA",
+    "BZ4X",
+    "C-HR",
+    "CAMRY",
+    "COROLLA",
+    "COROLLA CROSS",
+    "FJ CRUISER",
+    "HIACE",
+    "HIGHLANDER",
+    "HILUX",
+    "LAND CRUISER",
+    "PRIUS",
+    "RAIZE",
+    "RAV4",
+    "SEQUOIA",
+    "SIENNA",
+    "SUPRA",
+    "TACOMA",
+    "TUNDRA",
+    "YARIS",
+  ],
+  FORD: [
+    "BRONCO",
+    "BRONCO SPORT",
+    "ECOSPORT",
+    "EDGE",
+    "ESCAPE",
+    "EXPEDITION",
+    "EXPLORER",
+    "F150",
+    "F250",
+    "F350",
+    "FIESTA",
+    "FOCUS",
+    "FUSION",
+    "LOBO",
+    "MAVERICK",
+    "MUSTANG",
+    "RANGER",
+    "TERRITORY",
+    "TRANSIT",
+  ],
+  CHEVROLET: [
+    "AVEO",
+    "BEAT",
+    "BLAZER",
+    "BOLT",
+    "CAMARO",
+    "CAPTIVA",
+    "CAVALIER",
+    "CHEYENNE",
+    "COLORADO",
+    "CORVETTE",
+    "CRUZE",
+    "EQUINOX",
+    "GROOVE",
+    "MALIBU",
+    "ONIX",
+    "SILVERADO",
+    "SONIC",
+    "SPARK",
+    "SUBURBAN",
+    "TAHOE",
+    "TRACKER",
+    "TRAILBLAZER",
+    "TRAVERSE",
+    "TRAX",
+  ],
+  NISSAN: [
+    "ALTIMA",
+    "ARMADA",
+    "FRONTIER",
+    "KICKS",
+    "LEAF",
+    "MARCH",
+    "MAXIMA",
+    "MURANO",
+    "NP300",
+    "PATHFINDER",
+    "SENTRA",
+    "TITAN",
+    "URVAN",
+    "VERSA",
+    "X-TRAIL",
+    "XTERRA",
+  ],
+  HONDA: [
+    "ACCORD",
+    "BR-V",
+    "CITY",
+    "CIVIC",
+    "CR-V",
+    "CR-Z",
+    "FIT",
+    "HR-V",
+    "ODYSSEY",
+    "PILOT",
+    "RIDGELINE",
+  ],
+  MAZDA: [
+    "2",
+    "3",
+    "5",
+    "6",
+    "CX-3",
+    "CX-30",
+    "CX-5",
+    "CX-50",
+    "CX-7",
+    "CX-9",
+    "CX-90",
+    "MX-5",
+  ],
+  KIA: [
+    "EV6",
+    "FORTE",
+    "K3",
+    "K4",
+    "K900",
+    "NIRO",
+    "OPTIMA",
+    "RIO",
+    "SELTOS",
+    "SORENTO",
+    "SOUL",
+    "SPORTAGE",
+    "STINGER",
+    "TELLURIDE",
+  ],
+  HYUNDAI: [
+    "ACCENT",
+    "ELANTRA",
+    "GRAND I10",
+    "IONIQ",
+    "IONIQ 5",
+    "PALISADE",
+    "SANTA FE",
+    "SONATA",
+    "TUCSON",
+    "VELOSTER",
+  ],
+  BMW: [
+    "118I",
+    "120I",
+    "125I",
+    "218",
+    "220I",
+    "320I",
+    "325I",
+    "328I",
+    "330I",
+    "335I",
+    "420I",
+    "428I",
+    "430I",
+    "435I",
+    "520I",
+    "528I",
+    "530I",
+    "535I",
+    "540I",
+    "550I",
+    "640I",
+    "650I",
+    "740I",
+    "750I",
+    "760I",
+    "I3",
+    "I4",
+    "I5",
+    "I7",
+    "I8",
+    "IX",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M8",
+    "SERIE 1",
+    "SERIE 2",
+    "SERIE 3",
+    "SERIE 4",
+    "SERIE 5",
+    "SERIE 6",
+    "SERIE 7",
+    "SERIE 8",
+    "X1",
+    "X2",
+    "X3",
+    "X4",
+    "X5",
+    "X6",
+    "X7",
+    "XM",
+    "Z3",
+    "Z4",
+    "Z8",
+    "MINI COOPER",
+  ],
+  "MERCEDES BENZ": [
+    "A-180",
+    "A-200",
+    "A-250",
+    "C-180",
+    "C-200",
+    "C-250",
+    "C-300",
+    "C-350",
+    "C-63",
+    "CLA-180",
+    "CLA-200",
+    "CLA-250",
+    "CLE-300",
+    "CLK-320",
+    "CLK-350",
+    "CLS-350",
+    "E-200",
+    "E-250",
+    "E-300",
+    "E-350",
+    "E-400",
+    "E-450",
+    "E-500",
+    "EQA",
+    "EQB",
+    "EQC",
+    "EQE",
+    "EQS",
+    "G-500",
+    "G-63",
+    "GLA-180",
+    "GLA-200",
+    "GLA-250",
+    "GLB-180",
+    "GLB-200",
+    "GLB-250",
+    "GLC-200",
+    "GLC-250",
+    "GLC-300",
+    "GLE-350",
+    "GLE-450",
+    "GLK-300",
+    "GLK-350",
+    "GLS-450",
+    "GLS-580",
+    "S-400",
+    "S-450",
+    "S-500",
+    "S-600",
+    "SL-500",
+    "SLK-200",
+    "SLK-350",
+    "SPRINTER",
+  ],
+  AUDI: [
+    "A1",
+    "A3",
+    "A4",
+    "A5",
+    "A6",
+    "A7",
+    "A8",
+    "E-TRON",
+    "Q2",
+    "Q3",
+    "Q5",
+    "Q6",
+    "Q7",
+    "Q8",
+    "R8",
+    "RS3",
+    "RS4",
+    "RS5",
+    "RS6",
+    "RS7",
+    "RSQ3",
+    "RSQ8",
+    "S3",
+    "S4",
+    "S5",
+    "S6",
+    "S7",
+    "S8",
+    "SQ5",
+    "SQ7",
+    "SQ8",
+    "TT",
+    "TTS",
+  ],
+  PORSCHE: [
+    "718",
+    "911",
+    "918",
+    "BOXSTER",
+    "CAYENNE",
+    "CAYMAN",
+    "MACAN",
+    "PANAMERA",
+    "TAYCAN",
+  ],
+  JEEP: [
+    "CHEROKEE",
+    "COMMANDER",
+    "COMPASS",
+    "GLADIATOR",
+    "GRAND CHEROKEE",
+    "GRAND WAGONEER",
+    "LIBERTY",
+    "PATRIOT",
+    "RENEGADE",
+    "WAGONEER",
+    "WRANGLER",
+  ],
+  DODGE: [
+    "ATTITUDE",
+    "AVENGER",
+    "CALIBER",
+    "CHALLENGER",
+    "CHARGER",
+    "DAKOTA",
+    "DART",
+    "DURANGO",
+    "JOURNEY",
+    "NEON",
+    "NITRO",
+    "RAM",
+    "RAM 700",
+    "RAM 1500",
+    "RAM 2500",
+    "RAM 3500",
+    "VIPER",
+  ],
+  RAM: ["700", "1200", "1500", "2500", "3500", "PROMASTER"],
+  CHRYSLER: [
+    "200",
+    "300",
+    "PACIFICA",
+    "PT CRUISER",
+    "SEBRING",
+    "TOWN & COUNTRY",
+    "VOYAGER",
+  ],
+  FIAT: [
+    "124",
+    "500",
+    "500E",
+    "500L",
+    "500X",
+    "600",
+    "ARGO",
+    "DUCATO",
+    "MOBI",
+    "PALIO",
+    "PULSE",
+    "STRADA",
+    "UNO",
+  ],
+  MITSUBISHI: [
+    "ASX",
+    "ECLIPSE",
+    "L200",
+    "LANCER",
+    "MIRAGE",
+    "MONTERO",
+    "OUTLANDER",
+    "XPANDER",
+  ],
+  SUBARU: [
+    "BRZ",
+    "CROSSTREK",
+    "FORESTER",
+    "IMPREZA",
+    "LEGACY",
+    "OUTBACK",
+    "WRX",
+    "XV",
+  ],
+  SUZUKI: [
+    "BALENO",
+    "CIAZ",
+    "ERTIGA",
+    "FRONX",
+    "GRAND VITARA",
+    "IGNIS",
+    "JIMNY",
+    "S-CROSS",
+    "SWIFT",
+    "VITARA",
+    "XL7",
+  ],
+  PEUGEOT: [
+    "2008",
+    "206",
+    "207",
+    "208",
+    "3008",
+    "301",
+    "307",
+    "308",
+    "5008",
+    "508",
+    "EXPERT",
+    "LANDTREK",
+    "PARTNER",
+    "RIFTER",
+  ],
+  RENAULT: [
+    "ARKANA",
+    "CAPTUR",
+    "CLIO",
+    "DUSTER",
+    "FLUENCE",
+    "KANGOO",
+    "KARDIAN",
+    "KOLEOS",
+    "KWID",
+    "LOGAN",
+    "MASTER",
+    "MEGANE",
+    "OROCH",
+    "SANDERO",
+    "STEPWAY",
+    "TRAFIC",
+    "ZOE",
+  ],
+  SEAT: ["ALHAMBRA", "ARONA", "ATECA", "IBIZA", "LEON", "TARRACO", "TOLEDO"],
+  LEXUS: ["ES", "GX", "IS", "LC", "LS", "LX", "NX", "RX", "TX", "UX"],
+  INFINITI: [
+    "FX35",
+    "FX37",
+    "FX50",
+    "G37",
+    "JX35",
+    "M37",
+    "M56",
+    "Q50",
+    "Q60",
+    "Q70",
+    "QX30",
+    "QX50",
+    "QX55",
+    "QX56",
+    "QX60",
+    "QX70",
+    "QX80",
+  ],
+  CADILLAC: [
+    "ATS",
+    "CT5-V",
+    "CTS",
+    "ESCALADE",
+    "ESCALADE-V",
+    "LYRIQ",
+    "OPTIQ",
+    "SRX",
+    "STS",
+    "XT4",
+    "XT5",
+  ],
+  GMC: ["ACADIA", "CANYON", "SIERRA", "TERRAIN", "YUKON"],
+  BUICK: [
+    "ENCLAVE",
+    "ENCORE",
+    "ENVISION",
+    "ENVISTA",
+    "LACROSSE",
+    "REGAL",
+    "VERANO",
+  ],
+  LINCOLN: ["AVIATOR", "CORSAIR", "MKC", "MKX", "MKZ", "NAUTILUS", "NAVIGATOR"],
+  "ALFA ROMEO": [
+    "147",
+    "156",
+    "159",
+    "166",
+    "4C",
+    "BRERA",
+    "GIULIA",
+    "GIULIETTA",
+    "MITO",
+    "SPIDER",
+    "STELVIO",
+    "TONALE",
+  ],
+  JAGUAR: ["E-PACE", "F-PACE", "F-TYPE", "I-PACE", "XE", "XF", "XJ", "XK"],
+  "LAND ROVER": [
+    "DEFENDER",
+    "DISCOVERY",
+    "DISCOVERY SPORT",
+    "EVOQUE",
+    "FREELANDER",
+    "RANGE ROVER",
+    "RANGE ROVER SPORT",
+    "RANGE ROVER VELAR",
+    "VELAR",
+  ],
+  MINI: ["COOPER", "COOPER S", "COOPER SE", "COUNTRYMAN", "JOHN COOPER WORKS"],
+  TESLA: ["CYBERTRUCK", "MODEL 3", "MODEL S", "MODEL X", "MODEL Y"],
+  FERRARI: [
+    "296",
+    "458",
+    "488",
+    "812",
+    "F8",
+    "PORTOFINO",
+    "PUROSANGUE",
+    "ROMA",
+    "SF90",
+  ],
+  LAMBORGHINI: ["AVENTADOR", "HURACAN", "REVUELTO", "URUS", "VENENO"],
+  BENTLEY: [
+    "BENTAYGA",
+    "CONTINENTAL",
+    "CONTINENTAL GT",
+    "FLYING SPUR",
+    "MULSANNE",
+  ],
+  "ROLLS ROYCE": ["CULLINAN", "GHOST", "PHANTOM", "SPECTRE", "WRAITH"],
+  "ASTON MARTIN": [
+    "DB11",
+    "DB12",
+    "DB9",
+    "DBS",
+    "DBX",
+    "RAPIDE",
+    "VANQUISH",
+    "VANTAGE",
+  ],
+  MASERATI: [
+    "GHIBLI",
+    "GRAN TURISMO",
+    "GRECALE",
+    "LEVANTE",
+    "MC20",
+    "QUATTROPORTE",
+  ],
+  MCLAREN: [
+    "540C",
+    "570GT",
+    "570S",
+    "600LT",
+    "720S",
+    "750S",
+    "ARTURA",
+    "GT",
+    "SENNA",
+  ],
+  LOTUS: ["ELISE", "EMIRA", "EVORA", "EXIGE"],
+  CHIREY: [
+    "ARRIZO",
+    "ARRIZO 8",
+    "OMODA 5",
+    "TIGGO",
+    "TIGGO 2",
+    "TIGGO 4",
+    "TIGGO 7",
+    "TIGGO 8",
+  ],
+  JAC: [
+    "J2",
+    "J4",
+    "J7",
+    "SEI1",
+    "SEI2",
+    "SEI3",
+    "SEI4",
+    "SEI6",
+    "SEI7",
+    "T6",
+    "T8",
+  ],
+  BYD: ["DOLPHIN", "HAN", "SEAL", "SEALION", "SHARK", "SONG", "TANG", "YUAN"],
+  GEELY: [
+    "CITYRAY",
+    "COOLRAY",
+    "EMGRAND",
+    "GEOMETRY",
+    "GX3",
+    "MONJARO",
+    "OKAVANGO",
+    "STARRAY",
+  ],
+  OMODA: ["C5", "C7", "E5", "O5"],
+  JAECOO: ["7", "8"],
+  MG: ["3", "4", "5", "7", "HS", "MG4", "MG5", "ONE", "ZS"],
+  DONGFENG: ["CAPTAIN", "RICH 6", "SHINE", "SKYLINE", "T5L", "U-VAN"],
+  CHANGAN: ["ALSVIN", "CS35", "CS55", "CS75", "EADO", "HUNTER", "UNI-K"],
+  HAVAL: ["H6", "JOLION"],
+  "GREAT WALL": [
+    "HAVAL H6",
+    "HAVAL JOLION",
+    "ORA 03",
+    "POER",
+    "TANK",
+    "WINGLE",
+  ],
+  GWM: ["HAVAL", "HAVAL H6", "HAVAL JOLION", "ORA 03", "POER", "TANK"],
+  GAC: ["AION Y", "EMKOO", "EMZOOM", "GN8", "GS8"],
+  EXEED: ["LX", "RX", "TXL", "VX"],
+  JETOUR: ["DASHING", "X70"],
+  BAIC: ["BJ40", "D20", "EU5", "U5", "X35", "X55"],
+  SMART: ["FORFOUR", "FORTWO"],
+  SKYWELL: ["D11"],
+  SEV: ["E-WAN", "FRIDAY"],
+  STARVIA: ["EMPOWER", "SAVER"],
+  ZACUA: ["M2", "M3", "MX3"],
+  VUHL: ["5"],
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DICCIONARIO DE NORMALIZACIÓN
+// ═══════════════════════════════════════════════════════════════════════════
 const MAPFRE_NORMALIZATION_DICTIONARY = {
   brand_aliases: {
-    "GENERAL MOTORS": "GMC",
-    "GENERAL MOTORS 2": "GMC",
-    "GENERAL MOTORS COMPANY": "GMC",
-    "GENERAL MOTORS CORPORATION": "GMC",
-    GMC: "GMC",
-    "JAC SEI": "JAC",
+    "GENERAL MOTORS": "GENERAL MOTORS",
     "MG ROVER": "MG",
+    WOLKSWAGEN: "VOLKSWAGEN",
+    "WOLKSWAGEN VW": "VOLKSWAGEN",
+    "VOLKSWAGEN VW": "VOLKSWAGEN",
+    VW: "VOLKSWAGEN",
+    "JAC SEI": "JAC",
+    "JAC MOTORS": "JAC",
+    "JIANGLING MOTORS": "JMC",
+    JIANGLING: "JMC",
+    "GREAT WALL MOTORS": "GWM",
+    "GREAT WALL": "GWM",
+    "KIA MOTORS": "KIA",
+    "GAC MOTOR": "GAC",
+    "GAC MOTORS": "GAC",
+    GM: "GMC",
+    "CHRYSLER-DODGE": "CHRYSLER",
+    "CHRYSLER-DODGE DG": "CHRYSLER",
+    "BMW BW": "BMW",
+    "BMW MINI": "BMW",
+    "BMW-MINI": "BMW",
+    MINI: "BMW",
+    "MINI COOPER": "BMW",
+    MINICOOPER: "BMW",
+    "CHEVROLET GM": "GENERAL MOTORS",
   },
+
+  // ACTUALIZADO: Agregar AM, FM, RIN y más especificaciones irrelevantes
   irrelevant_comfort_audio: [
     "ABS",
     "CA",
@@ -86,14 +798,42 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "V.E.",
     "C/A",
     "S/D",
+    "WELTRADIO",
+    "WELRADIO",
+    "5PLAZAS",
+    "7PLAZAS",
+    "ACT",
+    "ACT.",
+    // NUEVOS: Audio y especificaciones de ruedas
+    "AM",
+    "FM",
+    "AM/FM",
+    "RIN",
+    "RINES",
+    "WHEELS",
+    "ALLOY",
+    "ALEACION",
+    "R15",
+    "R16",
+    "R17",
+    "R18",
+    "R19",
+    "R20",
+    "R21",
+    "R22",
+    "RHYNE",
+    "RHYNE SIZE",
   ],
+
   transmission_tokens_to_strip: [
+    "TA",
+    "T/A",
+    "T A",
     "AUT",
     "AUT.",
     "AUTO",
     "AT",
     "AT.",
-    "TA",
     "AUTOMATICO",
     "AUTOMATICA",
     "AUTOMATIC",
@@ -101,14 +841,17 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "AUTOMATIZADA",
     "TIPTRONIC",
     "STEPTRONIC",
-    "GEARTRONIC",
+    "GEARTRONIC", // Ya existía
+    "GEARTR", // NUEVO: Agregado como solicitado
     "MULTITRONIC",
     "SPORTSHIFT",
     "S-TRONIC",
     "S TRONIC",
     "STRONIC",
+    "TRONIC",
     "Q-TRONIC",
     "Q TRONIC",
+    "QTRONIC",
     "CVT",
     "DSG",
     "DCT",
@@ -128,6 +871,7 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "MECA",
     "MECHANICO",
   ],
+
   cylinder_normalization: {
     L3: "3CIL",
     L4: "4CIL",
@@ -157,7 +901,10 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "6V": "6CIL",
     "8V": "8CIL",
   },
+
+  // ACTUALIZADO: Agregar GEARTR y GEARTRONIC
   transmission_normalization: {
+    // MANUAL variants
     STD: "MANUAL",
     "STD.": "MANUAL",
     MANUAL: "MANUAL",
@@ -171,11 +918,18 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "SECUENCIAL.": "MANUAL",
     DRIVELOGIC: "MANUAL",
     DUALOGIC: "MANUAL",
+    ESTANDAR: "MANUAL",
+    STANDARD: "MANUAL",
+
+    // AUTO variants
     AUT: "AUTO",
     "AUT.": "AUTO",
     AUTO: "AUTO",
     AT: "AUTO",
     "AT.": "AUTO",
+    TA: "AUTO",
+    "T/A": "AUTO",
+    "T A": "AUTO",
     AUTOMATICO: "AUTO",
     AUTOMATICA: "AUTO",
     AUTOMATIC: "AUTO",
@@ -186,20 +940,26 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "S TRONIC": "AUTO",
     "S-TRONIC": "AUTO",
     STRONIC: "AUTO",
+    TRONIC: "AUTO",
     TIPTRONIC: "AUTO",
     STEPTRONIC: "AUTO",
     SELESPEED: "AUTO",
     "Q-TRONIC": "AUTO",
     "Q TRONIC": "AUTO",
+    QTRONIC: "AUTO",
     DCT: "AUTO",
     MULTITRONIC: "AUTO",
-    GEARTRONIC: "AUTO",
+    GEARTRONIC: "AUTO", // Ya existía
+    GEARTR: "AUTO", // NUEVO: Agregado como solicitado
     SPEEDSHIFT: "AUTO",
     SPORTSHIFT: "AUTO",
     POWERSHIFT: "AUTO",
     TORQUEFLITE: "AUTO",
     IVT: "AUTO",
+    VARIADOR: "AUTO",
+    "VARIADOR CONTINUO": "AUTO",
   },
+
   regex_patterns: {
     decimal_comma: /(\d),(\d)/g,
     multiple_spaces: /\s+/g,
@@ -207,10 +967,53 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     stray_punctuation: /(?<!\d)[\.,;]|[\.,;](?!\d)/g,
   },
 };
+
+const NUMERIC_CONTEXT_TOKENS = new Set([
+  "OCUP",
+  "OCUPANTE",
+  "OCUPANTES",
+  "OCUPACION",
+  "PASAJEROS",
+  "PASAJERO",
+  "PASAJ",
+  "PAS",
+  "PASAJE",
+  "PLAZA",
+  "PLAZAS",
+  "PUERTAS",
+  "PUERTA",
+  "PAX",
+  "TON",
+  "TONELADAS",
+  "TONS",
+]);
+
+const RESIDUAL_SINGLE_TOKENS = new Set(["A", "B", "C", "E", "Q", "V", "P"]);
+
+const VALID_DOOR_COUNTS = new Set([2, 3, 4, 5, 7]);
+
+const UNWANTED_MODEL_TOKENS = new Set([
+  "NUEVO",
+  "NUEVA",
+  "NEW",
+  "LINEA",
+  "PASAJERO",
+  "PASAJEROS",
+  "PASAJ",
+  "PAS",
+  "PLAZA",
+  "PLAZAS",
+]);
+
 const SPECIAL_TRIM_NORMALIZATIONS = [
   { regex: /\bA[\s-]?SPECH\b/gi, replacement: "A-SPEC" },
+  { regex: /\bS\s+LSLINE\b/gi, replacement: "S-LINE" },
+  { regex: /\bLSLINE\b/gi, replacement: "S-LINE" },
+  { regex: /\bLS\s+LINE\b/gi, replacement: "S-LINE" },
+  { regex: /\bS\s+LS\s+LINE\b/gi, replacement: "S-LINE" },
 ];
 
+// ACTUALIZADO: Proteger tokens de versión como T5, T6, T7, T8, T9
 const PROTECTED_HYPHEN_TOKENS = [
   {
     regex: /\bA[\s-]?SPEC\b/gi,
@@ -233,11 +1036,56 @@ const PROTECTED_HYPHEN_TOKENS = [
     canonical: "TYPE-F",
   },
   {
-    regex: /\bS[\s-]?LINE\b/gi,
+    regex: /\b(?:S[\s-]?LINE|SLINE|S\s+LINE)\b/gi,
     placeholder: "__MAPFRE_PROTECTED_S_LINE__",
     canonical: "S-LINE",
   },
+  {
+    regex: /\bMK[\s]?VI\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_MK_VI__",
+    canonical: "MK VI",
+  },
+  {
+    regex: /\bMK[\s]?VII\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_MK_VII__",
+    canonical: "MK VII",
+  },
+  // NUEVOS: Proteger versiones T5, T6, T7, T8, T9
+  {
+    regex: /\bT5\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_T5__",
+    canonical: "T5",
+  },
+  {
+    regex: /\bT6\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_T6__",
+    canonical: "T6",
+  },
+  {
+    regex: /\bT7\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_T7__",
+    canonical: "T7",
+  },
+  {
+    regex: /\bT8\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_T8__",
+    canonical: "T8",
+  },
+  {
+    regex: /\bT9\b/gi,
+    placeholder: "__MAPFRE_PROTECTED_T9__",
+    canonical: "T9",
+  },
 ];
+
+const TRANSMISSION_TOKENS = new Set(
+  Object.keys(MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization)
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FUNCIONES AUXILIARES
+// ═══════════════════════════════════════════════════════════════════════════
+
 function applyProtectedTokens(value = "") {
   let output = value;
   PROTECTED_HYPHEN_TOKENS.forEach(({ regex, placeholder }) => {
@@ -255,9 +1103,319 @@ function restoreProtectedTokens(value = "") {
   return output;
 }
 
-const TRANSMISSION_TOKENS = new Set(
-  Object.keys(MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization)
-);
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeText(value) {
+  return value
+    ? value
+        .toString()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim()
+        .toUpperCase()
+    : "";
+}
+
+function normalizeBrand(value = "") {
+  if (!value) return "";
+  const normalized = normalizeText(value);
+  const mapped = MAPFRE_NORMALIZATION_DICTIONARY.brand_aliases[normalized];
+  return (mapped || normalized).trim();
+}
+
+function isContaminatedModelToken(token, modeloBase) {
+  if (!token || !modeloBase) return false;
+
+  const modeloBaseNorm = normalizeText(modeloBase);
+  const tokenNorm = normalizeText(token);
+
+  if (UNWANTED_MODEL_TOKENS.has(tokenNorm)) {
+    return true;
+  }
+
+  if (tokenNorm === modeloBaseNorm) {
+    return false;
+  }
+
+  if (
+    tokenNorm.startsWith(modeloBaseNorm) &&
+    tokenNorm.length > modeloBaseNorm.length
+  ) {
+    const suffix = tokenNorm.substring(modeloBaseNorm.length);
+
+    const knownTrims = [
+      "ADVANCE",
+      "TECH",
+      "SPORT",
+      "BASE",
+      "ELITE",
+      "LUXURY",
+      "PREMIUM",
+      "TYPE",
+      "ASPEC",
+      "A-SPEC",
+      "SLINE",
+      "S-LINE",
+      "LIMITED",
+      "PLATINUM",
+      "SL",
+      "SX",
+      "EX",
+      "LX",
+    ];
+
+    for (const trim of knownTrims) {
+      const trimNorm = normalizeText(trim);
+      if (suffix.includes(trimNorm) || suffix === trimNorm) {
+        return true;
+      }
+    }
+  }
+
+  const contaminatedPatterns = [
+    /^MD(ADVANCE|TECH|SPORT|BASE)/,
+    /^RD(ADVANCE|TECH|SPORT|BASE)/,
+    /^TL(ADVANCE|TECH|SPORT|BASE)/,
+    /^NS(ADVANCE|TECH|SPORT|BASE)/,
+    /^ZD(ADVANCE|TECH|SPORT|BASE)/,
+  ];
+
+  for (const pattern of contaminatedPatterns) {
+    if (pattern.test(tokenNorm)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function extractBaseModel(modeloContaminado = "", marcaNormalizada = "") {
+  if (!modeloContaminado || !marcaNormalizada) return "";
+
+  const modeloNorm = normalizeText(modeloContaminado);
+
+  let cleaned = modeloNorm;
+  if (cleaned.startsWith(marcaNormalizada + " ")) {
+    cleaned = cleaned.substring(marcaNormalizada.length).trim();
+  }
+
+  cleaned = cleaned
+    .replace(/\bNUEVA\s+LINEA\b/g, "")
+    .replace(/\bLINEA\s+NUEVA\b/g, "")
+    .replace(/\bNUEVO\b/g, "")
+    .replace(/\bNUEVA\b/g, "")
+    .replace(/\bNEW\b/g, "")
+    .replace(/\bPASAJEROS?\b/g, "")
+    .replace(/\bGENERACION\b/g, "GEN")
+    .replace(/\bGEN\.?\s*(\d)/g, "GEN $1")
+    .replace(/\bGEN\./g, "GEN");
+
+  if (marcaNormalizada === "FORD") {
+    cleaned = cleaned.replace(/([A-Z])[-.](\d+)/g, "$1$2");
+  }
+
+  if (marcaNormalizada === "VOLKSWAGEN" && /\bJETTA\b/.test(cleaned)) {
+    return "JETTA";
+  }
+
+  if (marcaNormalizada === "BMW" && /\bMINI\b/.test(cleaned)) {
+    return "MINI COOPER";
+  }
+
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+
+  const modelosCatalogo =
+    CATALOGO_MAESTRO_MARCAS_MODELOS[marcaNormalizada] || [];
+  const modelosOrdenados = [...modelosCatalogo].sort(
+    (a, b) => b.length - a.length
+  );
+
+  for (const modeloCatalogo of modelosOrdenados) {
+    const modeloCatalogoNorm = normalizeText(modeloCatalogo);
+
+    if (
+      cleaned.startsWith(modeloCatalogoNorm + " ") ||
+      cleaned === modeloCatalogoNorm
+    ) {
+      return modeloCatalogo;
+    }
+  }
+
+  for (const modeloCatalogo of modelosOrdenados) {
+    const modeloCatalogoNorm = normalizeText(modeloCatalogo);
+    const firstToken = cleaned.split(" ")[0];
+
+    if (firstToken === modeloCatalogoNorm) {
+      return modeloCatalogo;
+    }
+  }
+
+  const tokens = cleaned.split(" ").filter(Boolean);
+  if (tokens.length > 0) {
+    for (const token of tokens) {
+      if (/^\d/.test(token)) continue;
+      if (/CIL|HP|TURBO|DOORS|OCUP|PUERTAS/.test(token)) continue;
+      if (
+        MAPFRE_NORMALIZATION_DICTIONARY.transmission_tokens_to_strip.includes(
+          token
+        )
+      )
+        continue;
+      if (
+        MAPFRE_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.includes(token)
+      )
+        continue;
+
+      return token;
+    }
+    return tokens[0];
+  }
+
+  return "";
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CORRECCIÓN ESPECIAL: Mercedes Benz
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+function processMercedesBenzModel(marca, modelo, version) {
+  if (!marca || normalizeText(marca) !== "MERCEDES BENZ") {
+    return { modelo, version };
+  }
+
+  if (!modelo || !version) {
+    return { modelo, version };
+  }
+
+  const modeloNorm = normalizeText(modelo);
+  const versionNorm = normalizeText(version);
+
+  const mercedesBaseModels = [
+    "A",
+    "C",
+    "E",
+    "S",
+    "G",
+    "B",
+    "CLA",
+    "CLE",
+    "CLS",
+    "GLA",
+    "GLB",
+    "GLC",
+    "GLE",
+    "GLK",
+    "GLS",
+    "SL",
+    "SLK",
+    "SLC",
+    "AMG",
+    "EQ",
+    "EQA",
+    "EQB",
+    "EQC",
+    "EQE",
+    "EQS",
+    "CLASE A",
+    "CLASE C",
+    "CLASE E",
+    "CLASE S",
+    "CLASE G",
+    "CLASE B",
+  ];
+
+  const isBaseModel = mercedesBaseModels.some(
+    (base) => modeloNorm === normalizeText(base)
+  );
+
+  if (!isBaseModel) {
+    return { modelo, version };
+  }
+
+  const numberMatch = versionNorm.match(/^(\d+)\s+(.*)$/);
+
+  if (!numberMatch) {
+    return { modelo, version };
+  }
+
+  const number = numberMatch[1];
+  const remainingVersion = numberMatch[2];
+
+  const newModelo = `${modeloNorm}-${number}`;
+
+  return {
+    modelo: newModelo,
+    version: remainingVersion.trim(),
+  };
+}
+
+function reconstructFullVersion(
+  modeloOriginal = "",
+  versionOriginal = "",
+  marcaNormalizada = "",
+  modeloBase = ""
+) {
+  const modeloNorm = normalizeText(modeloOriginal);
+  const versionNorm = normalizeText(versionOriginal);
+  const modeloBaseNorm = normalizeText(modeloBase);
+
+  let modeloSinMarca = modeloNorm;
+  if (modeloSinMarca.startsWith(marcaNormalizada + " ")) {
+    modeloSinMarca = modeloSinMarca.substring(marcaNormalizada.length).trim();
+  }
+
+  let especsDelModelo = "";
+  if (modeloSinMarca.startsWith(modeloBaseNorm + " ")) {
+    especsDelModelo = modeloSinMarca.substring(modeloBaseNorm.length).trim();
+  } else if (modeloSinMarca === modeloBaseNorm) {
+    especsDelModelo = "";
+  } else {
+    especsDelModelo = modeloSinMarca;
+  }
+
+  let versionLimpia = versionNorm;
+  const tokensVersion = versionLimpia.split(" ").filter(Boolean);
+  const tokensValidosVersion = [];
+
+  for (const token of tokensVersion) {
+    if (isContaminatedModelToken(token, modeloBase)) {
+      continue;
+    }
+    tokensValidosVersion.push(token);
+  }
+
+  const tokensEspecsModelo = especsDelModelo.split(" ").filter(Boolean);
+  const tokensValidosEspecsModelo = [];
+
+  for (const token of tokensEspecsModelo) {
+    if (isContaminatedModelToken(token, modeloBase)) {
+      continue;
+    }
+    tokensValidosEspecsModelo.push(token);
+  }
+
+  const tokensFinales = [];
+  const seen = new Set();
+
+  for (const token of tokensValidosVersion) {
+    if (!seen.has(token)) {
+      seen.add(token);
+      tokensFinales.push(token);
+    }
+  }
+
+  for (const token of tokensValidosEspecsModelo) {
+    if (!seen.has(token)) {
+      seen.add(token);
+      tokensFinales.push(token);
+    }
+  }
+
+  return tokensFinales.join(" ");
+}
 
 function parseMapfreVersionSegments(versionOriginal = "") {
   const info = {
@@ -287,21 +1445,11 @@ function parseMapfreVersionSegments(versionOriginal = "") {
   }
 
   info.rawSegments = segments.slice();
-
   const transmissionTokens = Array.from(TRANSMISSION_TOKENS);
 
   segments.forEach((segment, index) => {
-    const normalizedSegment = segment
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toUpperCase()
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (!normalizedSegment) {
-      return;
-    }
-
+    const normalizedSegment = normalizeText(segment);
+    if (!normalizedSegment) return;
     info.normalizedSegments.push(normalizedSegment);
 
     const looksLikeEngineConfig = /\b(?:L|V|I|R|H|B)\d{1,2}\b/.test(
@@ -368,10 +1516,6 @@ function parseMapfreVersionSegments(versionOriginal = "") {
   return info;
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function normalizeDrivetrain(versionString = "") {
   return versionString
     .replace(/\bALL[-\s]?WHEEL DRIVE\b/g, "AWD")
@@ -396,6 +1540,7 @@ function normalizeDrivetrain(versionString = "") {
 function normalizeCylinders(versionString = "") {
   if (!versionString || typeof versionString !== "string") return "";
   let normalized = versionString;
+
   normalized = normalized
     .replace(/\b(3|4|5|6|8)\s*V\b/g, "$1CIL")
     .replace(/\b(3|4|5|6|8)V\b/g, "$1CIL")
@@ -405,16 +1550,17 @@ function normalizeCylinders(versionString = "") {
   Object.entries(
     MAPFRE_NORMALIZATION_DICTIONARY.cylinder_normalization
   ).forEach(([from, to]) => {
-    const regex = new RegExp(`\b${escapeRegExp(from)}\b`, "gi");
+    const regex = new RegExp(`\\b${escapeRegExp(from)}\\b`, "gi");
     normalized = normalized.replace(regex, to);
   });
+
   return normalized;
 }
 
 function normalizeEngineDisplacement(versionString = "") {
   if (!versionString || typeof versionString !== "string") return "";
   return versionString
-    .replace(/\b(\d)(\d)L\b/g, "$1.$2L")
+    .replace(/\b(?<!\.)(\d)(\d)L\b/g, "$1.$2L")
     .replace(/\b(?<!\d\.)\d+L\b/g, (match) => `${match.slice(0, -1)}.0L`)
     .replace(/\b(?<!\d\.)\d+\s+L\b/g, (match) => {
       const digits = match.match(/\d+/)[0];
@@ -424,14 +1570,47 @@ function normalizeEngineDisplacement(versionString = "") {
 
 function normalizeStandaloneLiters(versionString = "") {
   if (!versionString || typeof versionString !== "string") return "";
-  return versionString.replace(
-    /\b(\d+\.\d+)(?!L\b)(?!\d)(?![A-Z])/g,
-    (match) => {
+
+  const collapsed = versionString.replace(
+    /\b(\d+(?:\.\d+)?)\s*(?:LTS?|LITROS?|L)\b/gi,
+    (_full, liters) => `${liters}L`
+  );
+
+  return collapsed.replace(
+    /\b(\d+\.\d+)(?=\s|$)(?!\s*(?:L\b|LTS?|LITROS?|T\b|TON|TONELADAS?|TONS?|OCUP|PASAJEROS?|PAS|HP\b|CIL|SERIE|K?G))/gi,
+    (match, _raw, offset, source) => {
       const liters = parseFloat(match);
-      if (!Number.isFinite(liters) || liters <= 0 || liters > 10) return match;
+      if (!Number.isFinite(liters) || liters < 0.5 || liters > 8) {
+        return match;
+      }
+
+      const leadingChar = offset > 0 ? source[offset - 1] : "";
+      if (leadingChar && /[A-Za-z.]/.test(leadingChar)) {
+        return match;
+      }
+
+      const before = source
+        .substring(Math.max(0, offset - 20), offset)
+        .toUpperCase();
+      if (/\b(TON|TONELADAS|KG|KILOGRAMOS|PESO|CAB|CHASIS)\b/.test(before)) {
+        return match;
+      }
+
+      const after = source
+        .substring(offset + match.length, offset + match.length + 20)
+        .toUpperCase();
+      if (/\b(PUERTAS|PTS?|OCUP|PASAJEROS?|PAS|CIL|SERIE)\b/.test(after)) {
+        return match;
+      }
+
       return `${match}L`;
     }
   );
+}
+
+function splitConcatenatedLiters(value = "") {
+  if (!value || typeof value !== "string") return "";
+  return value.replace(/(\d+(?:\.\d+)?L)(\d+(?:\.\d+)?L)/gi, "$1 $2");
 }
 
 function normalizeHorsepower(versionString = "") {
@@ -462,8 +1641,17 @@ function normalizeTurboSuffix(versionString = "") {
 function normalizeTonCapacity(versionString = "") {
   if (!versionString || typeof versionString !== "string") return "";
   return versionString.replace(
-    /\b(\d+(?:\.\d+)?)\s*TON\b/g,
-    (_, value) => `${value}TON`
+    /\b(\d+(?:\.\d+)?)\s*TON(?:ELADAS|S)?\b/gi,
+    (fullMatch, rawTon) => {
+      const tonValue = parseFloat(rawTon);
+      if (!Number.isFinite(tonValue) || tonValue <= 0) {
+        return " ";
+      }
+      const formatted = Number.isInteger(tonValue)
+        ? tonValue.toString()
+        : tonValue.toString();
+      return `${formatted}TON`;
+    }
   );
 }
 
@@ -471,16 +1659,12 @@ function stripLeadingPhrases(text, phrases = []) {
   let cleaned = text.trim();
   phrases.forEach((phrase) => {
     if (!phrase) return;
-    const normalized = phrase
-      .toString()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toUpperCase()
-      .replace(/\s+/g, " ")
-      .trim();
+    const normalized = normalizeText(phrase);
     if (!normalized) return;
+
     const variations = [normalized, normalized.replace(/\s+/g, "")];
     let changed = true;
+
     while (changed && cleaned) {
       changed = false;
       for (const variant of variations) {
@@ -498,28 +1682,6 @@ function stripLeadingPhrases(text, phrases = []) {
   return cleaned.trim();
 }
 
-function normalizeBrand(value = "") {
-  if (!value) return "";
-  const normalized = value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toUpperCase();
-  const mapped = MAPFRE_NORMALIZATION_DICTIONARY.brand_aliases[normalized];
-  return (mapped || normalized).trim();
-}
-
-function normalizeText(value) {
-  return value
-    ? value
-        .toString()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .trim()
-        .toUpperCase()
-    : "";
-}
-
 function cleanVersionString(versionString, marca = "", modelo = "") {
   if (!versionString || typeof versionString !== "string") return "";
 
@@ -535,34 +1697,45 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
   });
 
   cleaned = applyProtectedTokens(cleaned);
-  cleaned = applyProtectedTokens(cleaned);
-
+  cleaned = cleaned.replace(/([A-Z0-9])AUT\b/g, "$1 AUT");
+  cleaned = cleaned.replace(/\bAUT(?!O)(?=[A-Z0-9])/g, "AUT ");
   cleaned = cleaned.replace(
     MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
     "$1.$2"
   );
-  cleaned = stripLeadingPhrases(cleaned, [marca, modelo]);
 
   cleaned = cleaned.replace(/[,/]/g, " ");
   cleaned = cleaned.replace(/-/g, " ");
+
+  // Remove marca and modelo BEFORE splitting letters from numbers to avoid breaking alphanumeric models
+  cleaned = stripLeadingPhrases(cleaned, [marca, modelo]);
+
   cleaned = cleaned.replace(/(\d)([A-Z])/g, "$1 $2");
   cleaned = cleaned.replace(/([A-Z])(\d)/g, "$1 $2");
-  cleaned = cleaned.replace(
-    /\b([A-Z0-9]+)(AUT|MAN|STD|CVT|DSG|DCT|IVT|TIPTRONIC)\b/g,
-    "$1 $2"
-  );
   cleaned = cleaned.replace(/\bHB\b/g, "HATCHBACK");
   cleaned = cleaned.replace(/\bGW\b/g, "WAGON");
   cleaned = cleaned.replace(/\bPICK\s*UP\b/g, "PICKUP");
+  cleaned = cleaned.replace(/\bNUEVA\s+LINEA\b/g, " ");
+  cleaned = cleaned.replace(/\bLINEA\s+NUEVA\b/g, " ");
+  cleaned = cleaned.replace(/\bNUEVO\b/g, " ");
+  cleaned = cleaned.replace(/\bNUEVA\b/g, " ");
+  cleaned = cleaned.replace(/\bNEW\b/g, " ");
+  cleaned = cleaned.replace(/\bPASAJEROS?\b/g, " ");
+  cleaned = cleaned.replace(/\bPLAZAS?\b/g, " ");
   cleaned = cleaned.replace(/\b(V|L|R|H|I|B)\s+(\d{1,2})\b/g, "$1$2");
   cleaned = cleaned.replace(/\b(\d{1,2})\s+CIL\b/g, "$1CIL");
   cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s+L\b/g, "$1L");
+  cleaned = cleaned
+    .replace(/\bGENERACION\b/g, "GEN")
+    .replace(/\bGEN\.?\s*(\d)/g, "GEN $1")
+    .replace(/\bGEN\./g, "GEN");
 
   cleaned = normalizeTonCapacity(cleaned);
   cleaned = normalizeDrivetrain(cleaned);
   cleaned = normalizeCylinders(cleaned);
   cleaned = normalizeEngineDisplacement(cleaned);
   cleaned = normalizeStandaloneLiters(cleaned);
+  cleaned = splitConcatenatedLiters(cleaned);
   cleaned = normalizeTurboSuffix(cleaned);
   cleaned = normalizeHorsepower(cleaned);
   cleaned = normalizeTurboTokens(cleaned);
@@ -592,58 +1765,22 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
     MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces,
     ""
   );
+  cleaned = cleaned.replace(/\b0\s*TON(?:ELADAS|S)?\b/g, " ");
+  cleaned = cleaned.replace(/\b0TON\b/g, " ");
   cleaned = restoreProtectedTokens(cleaned);
 
   return cleaned;
 }
 
-// --- NUEVO: limpieza espec�fica de la columna MODELO ---
-function cleanModeloString(modelo = "", marca = "", versionOriginal = "") {
-  let base = normalizeText(modelo);
-  const marcaNorm = normalizeBrand(marca);
-
-  base = applyProtectedTokens(base);
-  base = base.replace(/[,/]/g, " ").replace(/\s+/g, " ").trim();
-
-  // 1) quitar la marca al inicio
-  base = stripLeadingPhrases(base, [marcaNorm]);
-
-  // 2) quitar la versi�n al final (tal como viene en la fuente)
-  let ver = normalizeText(versionOriginal);
-  ver = applyProtectedTokens(ver)
-    .replace(/[,/]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (ver) {
-    if (base.endsWith(ver)) {
-      base = base.slice(0, base.length - ver.length).trim();
-    } else {
-      // intento token a token desde el final
-      const vTokens = ver.split(" ").filter(Boolean);
-      let bTokens = base.split(" ").filter(Boolean);
-      if (vTokens.length && bTokens.length) {
-        const vJoined = vTokens.join(" ");
-        const bJoined = bTokens.join(" ");
-        if (bJoined.endsWith(vJoined)) {
-          bTokens = bTokens.slice(0, bTokens.length - vTokens.length);
-        }
-      }
-      base = bTokens.join(" ").trim();
-    }
-  }
-
-  base = restoreProtectedTokens(base);
-  base = base
-    .replace(
-      MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
-      " "
-    )
-    .replace(MAPFRE_NORMALIZATION_DICTIONARY.regex_patterns.trim_spaces, "");
-  return base;
-}
-// --- FIN NUEVO ---
-
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MEJORADA: Extracción de puertas y ocupantes
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CAMBIOS:
+ * - Ahora reconoce PLAZAS como sinónimo de OCUPANTES
+ * - Ahora reconoce PASAJE, PASAJERO, PASAJEROS como sinónimo de OCUPANTES
+ * - Mantiene todas las variantes existentes
+ */
 function extractDoorsAndOccupants(versionOriginal = "") {
   if (!versionOriginal || typeof versionOriginal !== "string") {
     return { doors: "", occupants: "" };
@@ -655,39 +1792,91 @@ function extractDoorsAndOccupants(versionOriginal = "") {
     .replace(/[,/]/g, " ");
 
   const doorsMatch = normalized.match(
-    /\b(\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/
+    /\b0?([23457])(?!\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/
   );
+  let doors = "";
+  if (doorsMatch) {
+    const doorCount = parseInt(doorsMatch[1], 10);
+    if (VALID_DOOR_COUNTS.has(doorCount)) {
+      doors = `${doorCount}PUERTAS`;
+    }
+  }
+
   const occMatch = normalized.match(
-    /\b0?(\d+)\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJ|PASAJEROS?|PAS)\b/
+    /\b0?(\d{1,2})\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJ(?:E|ERO)?S?|PAS|PLAZAS?)\b/
   );
-  const doors = doorsMatch ? `${doorsMatch[1]}PUERTAS` : "";
-  const occupants =
-    occMatch && !Number.isNaN(parseInt(occMatch[1], 10))
-      ? `${parseInt(occMatch[1], 10)}OCUP`
-      : "";
+  let occupants = "";
+  if (occMatch) {
+    const occCount = parseInt(occMatch[1], 10);
+    if (Number.isFinite(occCount) && occCount >= 2 && occCount <= 23) {
+      occupants = `${occCount}OCUP`;
+    }
+  }
 
   return { doors, occupants };
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IMPROVED TRANSMISSION NORMALIZATION
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
 function normalizeTransmission(transmissionCode) {
   if (!transmissionCode || typeof transmissionCode !== "string") return "";
+
   const normalized = transmissionCode
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
     .trim();
-  return (
-    MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization[normalized] ||
-    normalized
-  );
+
+  if (MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization[normalized]) {
+    return MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization[
+      normalized
+    ];
+  }
+
+  for (const [token, standardValue] of Object.entries(
+    MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization
+  )) {
+    if (normalized.includes(token)) {
+      return standardValue;
+    }
+  }
+
+  // MEJORADO: Incluir GEARTR en la detección
+  if (
+    /\b(AUT|AUTO|AUTOMATIC|CVT|DSG|TRONIC|GEARTR|T\/A|A\/T)\b/.test(normalized)
+  ) {
+    return "AUTO";
+  }
+  if (/\b(MAN|MANUAL|STD|MECA|STANDARD|ESTANDAR)\b/.test(normalized)) {
+    return "MANUAL";
+  }
+
+  if (/\d+AT|A\/T|\dA\b/.test(normalized)) {
+    return "AUTO";
+  }
+  if (/\d+MT|M\/T|\dM\b/.test(normalized)) {
+    return "MANUAL";
+  }
+
+  return "";
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * IMPROVED TRANSMISSION INFERENCE FROM VERSION
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
 function inferTransmissionFromVersion(versionOriginal = "") {
   if (!versionOriginal || typeof versionOriginal !== "string") return "";
+
   const normalized = versionOriginal
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
+
   for (const token of Object.keys(
     MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization
   )) {
@@ -696,14 +1885,101 @@ function inferTransmissionFromVersion(versionOriginal = "") {
       return MAPFRE_NORMALIZATION_DICTIONARY.transmission_normalization[token];
     }
   }
+
+  // MEJORADO: Incluir GEARTR en los patrones automáticos
+  const autoPatterns = [
+    /\bAUTO(?:MATICO|MATICA|MATIC|MATIZADA|MATIZADO)?\b/,
+    /\b(?:CVT|DSG|DCT|IVT)\b/,
+    /\b(?:TIP|STEP|GEAR|MULTI|SPORT|POWER|TORQUE)TRONIC\b/,
+    /\bGEARTR\b/, // NUEVO
+    /\bS[\s-]?TRONIC\b/,
+    /\bQ[\s-]?TRONIC\b/,
+    /\bT\/A\b/,
+    /\bA\/T\b/,
+    /\b\d+AT\b/,
+    /\bVARIADOR\b/,
+  ];
+
+  const manualPatterns = [
+    /\bMANUAL\b/,
+    /\bMECANIC[AO]\b/,
+    /\b(?:STD|STANDARD|ESTANDAR)\b/,
+    /\bSECUENCIAL\b/,
+    /\b\d+MT\b/,
+  ];
+
+  for (const pattern of autoPatterns) {
+    if (pattern.test(normalized)) {
+      return "AUTO";
+    }
+  }
+
+  for (const pattern of manualPatterns) {
+    if (pattern.test(normalized)) {
+      return "MANUAL";
+    }
+  }
+
   return "";
 }
 
+/**
+ * Detecta si un token es una especificación con número
+ * Ejemplos: "5PUERTAS", "4CIL", "2.0L", "200HP", "7OCUP"
+ */
+function isNumericSpecification(token) {
+  if (!token || typeof token !== "string") return false;
+  return /^\d+(\.\d+)?(PUERTAS?|OCUP|CIL|HP|L|KG|TON|PAX)$/i.test(token);
+}
+
+/**
+ * Deduplica tokens de forma inteligente
+ * - Elimina duplicados NO consecutivos (5PUERTAS ... 5PUERTAS)
+ * - Preserva números puros (2.0L y 2PUERTAS pueden coexistir)
+ * - Mantiene primera ocurrencia de cada especificación
+ */
+function deduplicateTokens(tokens) {
+  const seen = new Map();
+  const dedupedTokens = [];
+
+  tokens.forEach((token) => {
+    const normalized = token.trim().toUpperCase();
+    if (!normalized) return;
+
+    // Caso 1: Especificaciones numéricas (5PUERTAS, 4CIL, etc)
+    if (isNumericSpecification(normalized)) {
+      const specType = normalized.replace(/^\d+(\.\d+)?/, "");
+      if (seen.has(`spec_${specType}`)) return;
+      seen.set(`spec_${specType}`, normalized);
+      dedupedTokens.push(normalized);
+      return;
+    }
+
+    // Caso 2: Tokens alfanuméricos normales
+    if (!/^\d+(\.\d+)?(L|HP)?$/.test(normalized)) {
+      if (seen.has(normalized)) return;
+      seen.set(normalized, true);
+      dedupedTokens.push(normalized);
+      return;
+    }
+
+    // Caso 3: Números puros o con unidades
+    dedupedTokens.push(normalized);
+  });
+
+  return dedupedTokens;
+}
+
+/**
+ * Elimina tokens duplicados preservando el orden
+ * @deprecated Use deduplicateTokens() instead for intelligent deduplication
+ */
 function dedupeTokens(value = "") {
   if (!value) return "";
   const tokens = value.split(" ").filter(Boolean);
   const seen = new Set();
   const deduped = [];
+
   tokens.forEach((token) => {
     const formatted = token.trim();
     if (!formatted) return;
@@ -713,7 +1989,10 @@ function dedupeTokens(value = "") {
       deduped.push(formatted);
     }
   });
-  return deduped.join(" ");
+
+  // Use intelligent deduplication
+  const intelligentDeduped = deduplicateTokens(deduped);
+  return intelligentDeduped.join(" ");
 }
 
 function validateRecord(record) {
@@ -748,13 +2027,74 @@ function categorizeError(error) {
   const message = error.message.toLowerCase();
   if (message.includes("validation")) return "VALIDATION_ERROR";
   if (message.includes("hash")) return "HASH_GENERATION_ERROR";
+  if (message.includes("transmission")) return "TRANSMISSION_ERROR";
   return "NORMALIZATION_ERROR";
 }
 
+/**
+ * Normalize modelo field to remove contamination patterns before hash generation
+ * Fixes issue where "PICK UP SILVERADO" vs "SILVERADO" create different hashes
+ * Enhanced to remove single-letter trim codes and cab type specifications
+ */
+function normalizeModelo(marca, modelo) {
+  if (!modelo || typeof modelo !== "string") return "";
+
+  let normalized = modelo.toUpperCase().trim();
+  const marcaUpper = (marca || "").toUpperCase().trim();
+
+  // Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK)
+  normalized = normalized.replace(/^PICK\s*UP\s+/gi, "");
+  normalized = normalized.replace(/^PICK-UP\s+/gi, "");
+  normalized = normalized.replace(/^CAMIONETA\s+/gi, "");
+  normalized = normalized.replace(/^VAN\s+/gi, "");
+  normalized = normalized.replace(/^TRUCK\s+/gi, "");
+
+  // Remove brand name if repeated in model field
+  if (marcaUpper) {
+    const brandPattern = new RegExp(
+      `^${marcaUpper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`,
+      "gi"
+    );
+    normalized = normalized.replace(brandPattern, "");
+  }
+
+  // Remove single letter trim codes (e.g., "C 1500" → "1500", "M 350" → "350")
+  // Only when followed by numbers to preserve legitimate model codes
+  normalized = normalized.replace(/\s+([A-Z])\s+(\d)/g, " $2");
+
+  // Remove cab type and configuration codes from middle
+  normalized = normalized.replace(/\s+CAB\.?\s*REG\.?(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+CAB\.?\s*REGULAR(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+CREW\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+QUAD\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+MEGA\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+SUPER\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+KING\s+CAB(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+DOBLE\s+CABINA(?:\s+|$)/gi, " ");
+  normalized = normalized.replace(/\s+SENCILLA\s+CABINA(?:\s+|$)/gi, " ");
+
+  // Remove standalone trim codes at end (DR, WT, SL, SLE, SLT)
+  normalized = normalized.replace(/\s+(DR|WT|SL|SLE|SLT)$/gi, "");
+
+  // Remove trim level suffixes from end
+  normalized = normalized.replace(
+    /\s+(CREW|QUAD|MEGA|SUPER|KING)\s+CAB$/gi,
+    ""
+  );
+  normalized = normalized.replace(/\s+(DOBLE|SENCILLA)\s+CABINA$/gi, "");
+
+  // Clean up multiple spaces and trim
+  normalized = normalized.replace(/\s+/g, " ").trim();
+
+  return normalized;
+}
+
 function createCommercialHash(vehicle) {
+  const normalizedModelo = normalizeModelo(vehicle.marca, vehicle.modelo);
+
   const key = [
     vehicle.marca || "",
-    vehicle.modelo || "",
+    normalizedModelo || "",
     vehicle.anio ? vehicle.anio.toString() : "",
     vehicle.transmision || "",
   ]
@@ -765,6 +2105,11 @@ function createCommercialHash(vehicle) {
   return crypto.createHash("sha256").update(key).digest("hex");
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FUNCIÓN PRINCIPAL DE PROCESAMIENTO CON VALIDACIÓN ROBUSTA
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
 function processMapfreRecord(record) {
   const parsedSegments = parseMapfreVersionSegments(
     record.version_original || ""
@@ -774,18 +2119,46 @@ function processMapfreRecord(record) {
     normalizeTransmission(parsedSegments.transmissionSegment || "") ||
     inferTransmissionFromVersion(parsedSegments.transmissionSegment || "");
 
-  const derivedTransmission =
-    normalizeTransmission(record.transmision) ||
-    transmissionFromSegment ||
-    inferTransmissionFromVersion(record.version_original);
+  const transmissionFromField = normalizeTransmission(record.transmision || "");
+
+  const transmissionFromVersion = inferTransmissionFromVersion(
+    record.version_original || ""
+  );
+
+  let derivedTransmission =
+    transmissionFromField || transmissionFromSegment || transmissionFromVersion;
+
+  if (!derivedTransmission) {
+    derivedTransmission = "AUTO";
+  }
+
+  if (derivedTransmission !== "AUTO" && derivedTransmission !== "MANUAL") {
+    const reNormalized = normalizeTransmission(derivedTransmission);
+    derivedTransmission = reNormalized || "AUTO";
+  }
+
+  if (derivedTransmission.length > 20) {
+    derivedTransmission = derivedTransmission.substring(0, 20).trim();
+  }
 
   record.transmision = derivedTransmission;
 
   const marcaNormalizada = normalizeBrand(record.marca || "");
-  const modeloNormalizado = cleanModeloString(
-    record.modelo || "",
+  const modeloBase = extractBaseModel(record.modelo || "", marcaNormalizada);
+
+  const mercedesProcessed = processMercedesBenzModel(
     marcaNormalizada,
+    modeloBase,
     record.version_original || ""
+  );
+  const modeloFinal = mercedesProcessed.modelo;
+  const versionParaProcesar = mercedesProcessed.version;
+
+  const versionCompleta = reconstructFullVersion(
+    record.modelo || "",
+    versionParaProcesar,
+    marcaNormalizada,
+    modeloFinal
   );
 
   const segmentDoorData = extractDoorsAndOccupants(
@@ -798,50 +2171,113 @@ function processMapfreRecord(record) {
   const validation = validateRecord({
     ...record,
     marca: marcaNormalizada,
-    modelo: modeloNormalizado,
+    modelo: modeloFinal,
   });
   if (!validation.isValid) {
     throw new Error(`Validation failed: ${validation.errors.join(", ")}`);
   }
 
-  const sourceForCleaning =
-    parsedSegments.orderedSegments.length > 0
-      ? parsedSegments.orderedSegments.join(", ")
-      : record.version_original || "";
-
   let versionLimpia = cleanVersionString(
-    sourceForCleaning,
+    versionCompleta,
     marcaNormalizada,
-    modeloNormalizado
+    modeloFinal
   );
 
   versionLimpia = versionLimpia
-    .replace(/\b\d\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/gi, " ")
-    .replace(/\b0?\d+\s*OCUP\b/gi, " ")
+    .replace(
+      /\b0?([23457])(?!\d)\s*(?:P(?:TAS?|TS?|TA)?|PUERTAS?|PTS?)\b/gi,
+      " "
+    )
+    .replace(
+      /\b0?\d{1,2}\s*(?:OCUPANTES?|OCUP|OCU|OC|O\.?|PAX|PASAJ(?:E|ERO)?S?|PAS|PLAZAS?)\b/gi,
+      " "
+    )
+    .replace(/\s+[.,](?=\s|$)/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  versionLimpia = dedupeTokens(
-    [versionLimpia, doors, occupants].filter(Boolean).join(" ").trim()
-  );
+  const tokens = versionLimpia.split(" ").filter(Boolean);
+  const sanitizedTokens = [];
+  let fallbackDoors = "";
+
+  tokens.forEach((token, idx, arr) => {
+    if (!token) return;
+    if (/^[.,]$/.test(token)) return;
+    if (/^\d+$/.test(token)) {
+      const next = (arr[idx + 1] || "").toUpperCase();
+      const prev = (arr[idx - 1] || "").toUpperCase();
+      if (
+        /^\d+OCUP$/i.test(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(next) ||
+        NUMERIC_CONTEXT_TOKENS.has(prev)
+      ) {
+        return;
+      }
+      if (!doors && !fallbackDoors) {
+        const numericValue = parseInt(token, 10);
+        if (
+          Number.isFinite(numericValue) &&
+          VALID_DOOR_COUNTS.has(numericValue)
+        ) {
+          fallbackDoors = `${numericValue}PUERTAS`;
+          return;
+        }
+      }
+      sanitizedTokens.push(token);
+      return;
+    }
+    const upperToken = token.toUpperCase();
+    if (upperToken.length === 1 && RESIDUAL_SINGLE_TOKENS.has(upperToken)) {
+      return;
+    }
+    sanitizedTokens.push(token);
+  });
+
+  versionLimpia = dedupeTokens(sanitizedTokens.join(" "));
+
+  const finalDoors = doors || fallbackDoors;
+  versionLimpia = [versionLimpia, finalDoors, occupants]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   if (!versionLimpia) {
     throw new Error("Normalization produced empty version_limpia");
   }
 
-  const normalized = {
+  if (
+    !derivedTransmission ||
+    (derivedTransmission !== "AUTO" && derivedTransmission !== "MANUAL")
+  ) {
+    throw new Error(
+      `Invalid transmission after normalization: '${derivedTransmission}'. Must be AUTO or MANUAL.`
+    );
+  }
+
+  if (derivedTransmission.length > 20) {
+    throw new Error(
+      `Transmission exceeds 20 characters: '${derivedTransmission}' (${derivedTransmission.length} chars)`
+    );
+  }
+
+  const baseNormalized = {
     origen_aseguradora: "MAPFRE",
     id_original: record.id_original,
     marca: marcaNormalizada,
-    modelo: modeloNormalizado,
+    modelo: normalizeModelo(marcaNormalizada, modeloFinal),
     anio: record.anio,
-    transmision: record.transmision,
+    transmision: derivedTransmission,
     version_original: record.version_original,
     version_limpia: versionLimpia,
     fecha_procesamiento: new Date().toISOString(),
   };
 
-  normalized.hash_comercial = createCommercialHash(normalized);
+  const normalized = {
+    ...baseNormalized,
+    hash_comercial: createCommercialHash(baseNormalized),
+  };
+
   return normalized;
 }
 

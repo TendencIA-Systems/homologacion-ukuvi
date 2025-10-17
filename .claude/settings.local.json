@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*)",
+      "Bash(awk:*)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(where python)",
+      "Bash(dir:*)",
+      "Bash(ls:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
