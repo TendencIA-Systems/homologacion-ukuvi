@@ -9,7 +9,13 @@
       "Bash(pip install:*)",
       "Bash(where python)",
       "Bash(dir:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(claude-code-spec-workflow get-steering-context:*)",
+      "Bash(claude-code-spec-workflow get-spec-context:*)",
+      "Bash(claude-code-spec-workflow get-tasks:*)",
+      "Bash(mkdir:*)",
+      "Bash(claude-code-spec-workflow get-template-context:*)",
+      "Bash(test:*)"
     ],
     "deny": [],
     "ask": []
