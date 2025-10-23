@@ -15,7 +15,12 @@
       "Bash(claude-code-spec-workflow get-tasks:*)",
       "Bash(mkdir:*)",
       "Bash(claude-code-spec-workflow get-template-context:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(.specify/scripts/bash/check-prerequisites.sh --json)",
+      "Bash(claude-code-spec-workflow get-content \"/mnt/c/Users/lfern/OneDrive/Escritorio/normalizacio-etl/.claude/specs/etl-model-normalization-fixes/requirements.md\")",
+      "Bash(claude-code-spec-workflow get-content \"/mnt/c/Users/lfern/OneDrive/Escritorio/normalizacio-etl/.claude/steering/product.md\")",
+      "Bash(claude-code-spec-workflow get-content \"/mnt/c/Users/lfern/OneDrive/Escritorio/normalizacio-etl/.claude/specs/etl-model-normalization-fixes/design.md\")",
+      "Bash(claude-code-spec-workflow get-content \"/mnt/c/Users/lfern/OneDrive/Escritorio/normalizacio-etl/.claude/templates/design-template.md\")"
     ],
     "deny": [],
     "ask": []

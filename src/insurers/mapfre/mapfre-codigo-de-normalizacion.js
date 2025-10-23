@@ -14,6 +14,71 @@
 
 const crypto = require("crypto");
 
+// Specs to remove from MODELO field (should be in VERSION)
+const MODELO_SPECS_TO_REMOVE = [
+  "VAN",
+  "WAGON",
+  "SEDAN",
+  "HATCHBACK",
+  "HATCH BACK",
+  "COUPE",
+  "CONVERTIBLE",
+  "SUV",
+  "CROSSOVER",
+  "CROSS COUNTRY",
+  "PICK UP",
+  "PICKUP",
+  "RS",
+  "GT",
+  "GTI",
+  "GTS",
+  "AMG",
+  "SRT",
+  "S-LINE",
+  "R-LINE",
+  "M-SPORT",
+  "TYPE-R",
+  "TYPE-S",
+  "A-SPEC",
+  "NISMO",
+  "TRD",
+  "CROSS",
+  "SPORT",
+  "LUXURY",
+  "LIMITED",
+  "EXECUTIVE",
+  "PREMIUM",
+  "DERBY",
+  "NUEVO",
+  "NUEVA",
+  "NEW",
+  "JOYLONG",
+  "EDITION",
+  "SPECIAL",
+  "ANNIVERSARY",
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODELO NORMALIZATION (Fix for Issues #1-5)
+// ═══════════════════════════════════════════════════════════════════════════
+// Inline implementation for Mapfre's n8n workflow
+
+/**
+ * Fix 1: Remove SERIE prefix from BMW models
+ * Critical fix - applies to all insurers
+ */
+function cleanBMWModelo(marca, modelo) {
+  if (!modelo) return modelo;
+
+  // Only apply to BMW marca
+  if (marca && marca.toUpperCase().trim() === "BMW") {
+    // Remove "SERIE " prefix (case insensitive)
+    modelo = modelo.replace(/^SERIE\s+/i, "").trim();
+  }
+
+  return modelo;
+}
+
 const BATCH_SIZE = 5000;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -728,15 +793,15 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "CHRYSLER-DODGE": "CHRYSLER",
     "CHRYSLER-DODGE DG": "CHRYSLER",
     "BMW BW": "BMW",
-    "BMW MINI": "BMW",
-    "BMW-MINI": "BMW",
-    MINI: "BMW",
-    "MINI COOPER": "BMW",
-    MINICOOPER: "BMW",
+    "BMW MINI": "MINI", // MINI vehicles must be stored under MINI brand, not BMW
+    "BMW-MINI": "MINI",
+    MINI: "MINI",
+    "MINI COOPER": "MINI",
+    MINICOOPER: "MINI",
     "CHEVROLET GM": "GENERAL MOTORS",
   },
 
-  // ACTUALIZADO: Agregar AM, FM, RIN y más especificaciones irrelevantes
+  // ACTUALIZADO: Expanded comfort/audio tokens
   irrelevant_comfort_audio: [
     "ABS",
     "CA",
@@ -767,6 +832,9 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "RADIO",
     "STEREO",
     "MP3",
+    "AM",
+    "FM",
+    "AM/FM",
     "DVD",
     "GPS",
     "BT",
@@ -780,8 +848,11 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "SENSORES",
     "PARK",
     "PARKTRONIC",
+    "PARKING",
     "CLIMA",
     "CLIMATRONIC",
+    "CLIMATIZADOR",
+    "AIRE ACONDICIONADO",
     "D/T",
     "D T",
     "D/V",
@@ -789,6 +860,7 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "TM",
     "DIS",
     "PADDLE",
+    "LEVAS",
     "KEYLESS",
     "PUSH",
     "START",
@@ -804,15 +876,123 @@ const MAPFRE_NORMALIZATION_DICTIONARY = {
     "7PLAZAS",
     "ACT",
     "ACT.",
-    // NUEVOS: Audio y especificaciones de ruedas
-    "AM",
-    "FM",
-    "AM/FM",
+    "AUDIO",
+    "SOUND",
+    "PREMIUM SOUND",
+    "HARMAN KARDON",
+    "BANG OLUFSEN",
+    "MERIDIAN",
+    "BURMESTER",
+    "MARK LEVINSON",
+    "JBL",
+    "BEATS",
+    "BOSE",
+    "BLUETOOTH",
+    "GPS NAV",
+    "NAVEGACION",
+    "NAVEGADOR",
+    "PANTALLA",
+    "TOUCH",
+    "TOUCHSCREEN",
+    "MONITOR",
+    "DISPLAY",
+    "LEATHER",
+    "VINYL",
+    "CLOTH",
+    "ALCANTARA",
+    "SUEDE",
+    "CUERO",
+    "ALUMINUM",
+    "MADERA",
+    "WOOD",
+    "FIBRA DE CARBONO",
+    "CARBON FIBER",
+    "PUSH BUTTON",
+    "PUSH START",
+    "START STOP",
+    "LLAVE",
+    "XENON",
+    "HID",
+    "LED",
+    "HALOGEN",
+    "FAROS",
+    "LUCES",
+    "BI-XENON",
+    "BIXENON",
+    "SUNROOF",
+    "MOONROOF",
+    "TECHO",
+    "QUEMACOCOS",
+    "PANORAMIC",
+    "PANORAMICO",
+    "CRUISE",
+    "CONTROL CRUCERO",
+    "VELOCIDAD",
+    "LIMITADOR",
+    "FRENOS ABS",
+    "EBD",
+    "ESP",
+    "ESC",
+    "VSC",
+    "VDC",
+    "TRACTION CONTROL",
+    "CONTROL TRACCION",
+    "ASISTENTE",
+    "ASSISTANT",
+    "HILL",
+    "DESCENT",
+    "ASCENT",
+    "DTC",
+    "DSC",
+    "CAMARA",
+    "CAMERA",
+    "REVERSA",
+    "REVERSE",
+    "TRASERA",
+    "REAR VIEW",
+    "360",
+    "BLIND SPOT",
+    "PUNTO CIEGO",
+    "LANE",
+    "CARRIL",
+    "DEPARTURE",
+    "KEEP",
+    "ASSIST",
+    "SHIFTER",
+    "VOLANTE MULTIFUNCION",
+    "MULTI",
+    "CALEFACCION",
+    "HEATED",
+    "VENTILADOS",
+    "VENTILATED",
+    "ENFRIADOS",
+    "COOLED",
+    "MASAJE",
+    "MASSAGE",
+    "ELECTRICOS",
+    "ELECTRIC",
+    "POWER",
+    "AJUSTABLES",
+    "ADJUSTABLE",
+    "MEMORIA",
+    "MEMORY",
+    "SUSPENSION",
+    "AMORTIGUACION",
+    "ADAPTIVE",
+    "ADAPTATIVA",
+    "MAGNETICA",
+    "MAGNETIC",
+    "NEUMATICA",
+    "PNEUMATIC",
+    "AIR SUSPENSION",
     "RIN",
     "RINES",
     "WHEELS",
     "ALLOY",
     "ALEACION",
+    "LLANTA",
+    "LLANTAS",
+    "GAMUZA",
     "R15",
     "R16",
     "R17",
@@ -992,6 +1172,35 @@ const RESIDUAL_SINGLE_TOKENS = new Set(["A", "B", "C", "E", "Q", "V", "P"]);
 
 const VALID_DOOR_COUNTS = new Set([2, 3, 4, 5, 7]);
 
+// ═══════════════════════════════════════════════════════════════════════════
+// BRAND CONSOLIDATION MAP (Component 2 from Design.md)
+// ═══════════════════════════════════════════════════════════════════════════
+const BRAND_CONSOLIDATION_MAP = {
+  // Suffix removal
+  "BMW BW": "BMW",
+  "VOLKSWAGEN VW": "VOLKSWAGEN",
+  "CHEVROLET GM": "CHEVROLET",
+  "FORD FR": "FORD",
+  "AUDI II": "AUDI",
+
+  // Variant consolidation
+  "KIA MOTORS": "KIA",
+  "TESLA MOTORS": "TESLA",
+  "MERCEDES BENZ II": "MERCEDES BENZ",
+  "NISSAN II": "NISSAN",
+  "GREAT WALL MOTORS": "GREAT WALL",
+
+  // Typo correction
+  BERCEDES: "MERCEDES BENZ",
+  BUIK: "BUICK",
+
+  // Invalid brands (flag for deletion)
+  AUTOS: "INVALID_BRAND",
+  MOTOCICLETAS: "INVALID_BRAND",
+  MULTIMARCA: "INVALID_BRAND",
+  LEGALIZADO: "INVALID_BRAND",
+};
+
 const UNWANTED_MODEL_TOKENS = new Set([
   "NUEVO",
   "NUEVA",
@@ -1123,6 +1332,18 @@ function normalizeBrand(value = "") {
   const normalized = normalizeText(value);
   const mapped = MAPFRE_NORMALIZATION_DICTIONARY.brand_aliases[normalized];
   return (mapped || normalized).trim();
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * CONSOLIDATE BRAND (Component 2 from Design.md)
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Apply centralized brand consolidation after initial normalization
+ */
+function consolidateBrand(marca) {
+  if (!marca || typeof marca !== "string") return "";
+  const normalized = marca.toUpperCase().trim();
+  return BRAND_CONSOLIDATION_MAP[normalized] || normalized;
 }
 
 function isContaminatedModelToken(token, modeloBase) {
@@ -1270,10 +1491,14 @@ function extractBaseModel(modeloContaminado = "", marcaNormalizada = "") {
 
       return token;
     }
+    // FALLBACK: Return first token even if it's a number or spec
+    // This prevents returning empty string when all tokens are filtered
     return tokens[0];
   }
 
-  return "";
+  // ULTIMATE FALLBACK: Return original cleaned model if no tokens found
+  // This prevents validation failures due to empty modelo
+  return cleaned || modeloNorm;
 }
 
 /**
@@ -1682,6 +1907,32 @@ function stripLeadingPhrases(text, phrases = []) {
   return cleaned.trim();
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * FIX INVALID DOOR COUNTS (Component 5 from Design.md)
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Remove invalid door count patterns (BMW model numbers, truck notations, etc.)
+ */
+function fixInvalidDoorCounts(text) {
+  if (!text || typeof text !== "string") return "";
+
+  // BMW model numbers incorrectly parsed as doors
+  const bmwModelNumbers = ["300", "320", "328", "335", "340", "350"];
+  bmwModelNumbers.forEach((num) => {
+    const regex = new RegExp(`\\b${num}PUERTAS\\b`, "g");
+    text = text.replace(regex, "");
+  });
+
+  // Salvageable truck notation (3500 -> 4PUERTAS for crew cabs)
+  text = text.replace(/\b3500PUERTAS\b/g, "4PUERTAS");
+
+  // Invalid door count values (0, 1, 6, 8, 9, or any 3+ digit numbers)
+  text = text.replace(/\b[0168-9]PUERTAS\b/g, "");
+  text = text.replace(/\b\d{3,}PUERTAS\b/g, "");
+
+  return text;
+}
+
 function cleanVersionString(versionString, marca = "", modelo = "") {
   if (!versionString || typeof versionString !== "string") return "";
 
@@ -1692,11 +1943,21 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
     .replace(/"/g, " ")
     .trim();
 
+  // NEW FIX 1: Remove escape characters (Design.md Component 5)
+  cleaned = cleaned.replace(/\\"/g, ""); // Remove escaped quotes
+  cleaned = cleaned.replace(/\\\\/g, ""); // Remove backslashes
+  cleaned = cleaned.replace(/[""''\"'\u201C\u201D\u2018\u2019]/g, " "); // All quote types
+
   SPECIAL_TRIM_NORMALIZATIONS.forEach(({ regex, replacement }) => {
     cleaned = cleaned.replace(regex, replacement);
   });
 
   cleaned = applyProtectedTokens(cleaned);
+
+  // NEW FIX 2: Separate HP from AUT (Design.md Component 5)
+  cleaned = cleaned.replace(/(\d+)HPAUT/gi, "$1HP AUT");
+  cleaned = cleaned.replace(/(\d+)HP([A-Z])/gi, "$1HP $2");
+
   cleaned = cleaned.replace(/([A-Z0-9])AUT\b/g, "$1 AUT");
   cleaned = cleaned.replace(/\bAUT(?!O)(?=[A-Z0-9])/g, "AUT ");
   cleaned = cleaned.replace(
@@ -1767,6 +2028,10 @@ function cleanVersionString(versionString, marca = "", modelo = "") {
   );
   cleaned = cleaned.replace(/\b0\s*TON(?:ELADAS|S)?\b/g, " ");
   cleaned = cleaned.replace(/\b0TON\b/g, " ");
+
+  // NEW FIX 3: Remove invalid door counts (Design.md Component 5)
+  cleaned = fixInvalidDoorCounts(cleaned);
+
   cleaned = restoreProtectedTokens(cleaned);
 
   return cleaned;
@@ -1814,6 +2079,64 @@ function extractDoorsAndOccupants(versionOriginal = "") {
   }
 
   return { doors, occupants };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * RECOVER TRANSMISSION (Component 3 from Design.md)
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Extract valid transmission from contaminated fields with fallback inference
+ */
+function recoverTransmission(record) {
+  if (!record) return null;
+
+  const transmisionField = (record.transmision || "")
+    .toString()
+    .toUpperCase()
+    .trim();
+  const versionOriginal = (record.version_original || "").toString();
+
+  // Step 1: Try to extract from contaminated transmision field
+  const validPatterns = [
+    "AUTO",
+    "AUTOMATIC",
+    "AUTOMATICO",
+    "AUTOMATICA",
+    "MANUAL",
+    "STD",
+    "STANDARD",
+    "CVT",
+    "DSG",
+    "TIPTRONIC",
+    "STEPTRONIC",
+    "GEARTRONIC",
+    "GEARTR",
+    "S-TRONIC",
+    "S TRONIC",
+    "STRONIC",
+    "TRONIC",
+    "MULTITRONIC",
+    "SPORTSHIFT",
+    "POWERSHIFT",
+  ];
+
+  for (const pattern of validPatterns) {
+    if (transmisionField.includes(pattern)) {
+      const normalized = normalizeTransmission(pattern);
+      if (normalized === "AUTO" || normalized === "MANUAL") {
+        return normalized;
+      }
+    }
+  }
+
+  // Step 2: Infer from version_original
+  const inferred = inferTransmissionFromVersion(versionOriginal);
+  if (inferred === "AUTO" || inferred === "MANUAL") {
+    return inferred;
+  }
+
+  // Step 3: Cannot recover - return null (record will be discarded)
+  return null;
 }
 
 /**
@@ -2032,15 +2355,117 @@ function categorizeError(error) {
 }
 
 /**
+ * Issue #5: Extract base modelo from Mapfre's version-contaminated modelo field
+ * Mapfre stores version info in modelo field (e.g., "HR-V PRIME 1.8 CVT")
+ * Extract base model: "HR-V PRIME 1.8 CVT" → "HR-V"
+ */
+function extractMapfreBaseModelo(marca, modeloContaminado) {
+  if (!modeloContaminado || !marca) return modeloContaminado;
+
+  const marcaUpper = marca.toUpperCase().trim();
+  const modeloUpper = modeloContaminado.toUpperCase().trim();
+
+  // Get the catalog of models for this brand
+  const brandModels = CATALOGO_MAESTRO_MARCAS_MODELOS[marcaUpper];
+  if (!brandModels || brandModels.length === 0) {
+    return modeloContaminado;
+  }
+
+  // Sort models by length (longest first) to match longest model name
+  const sortedModels = [...brandModels].sort((a, b) => b.length - a.length);
+
+  // Try to find a matching model at the start of the string
+  for (const catalogModel of sortedModels) {
+    const catalogUpper = catalogModel.toUpperCase();
+
+    // Check if modelo starts with this catalog entry
+    if (modeloUpper === catalogUpper) {
+      // Exact match
+      return catalogModel;
+    } else if (modeloUpper.startsWith(catalogUpper + " ")) {
+      // Match with space after (e.g., "HR-V PRIME..." matches "HR-V")
+      return catalogModel;
+    }
+  }
+
+  // If no match found, return original
+  return modeloContaminado;
+}
+
+/**
  * Normalize modelo field to remove contamination patterns before hash generation
  * Fixes issue where "PICK UP SILVERADO" vs "SILVERADO" create different hashes
  * Enhanced to remove single-letter trim codes and cab type specifications
+ * Enhanced with NUEVO/NUEVA/NEW prefix removal (Component 4 from Design.md)
  */
 function normalizeModelo(marca, modelo) {
   if (!modelo || typeof modelo !== "string") return "";
 
   let normalized = modelo.toUpperCase().trim();
   const marcaUpper = (marca || "").toUpperCase().trim();
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MAPFRE SPECIAL HANDLING: Extract base modelo from version contamination
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Mapfre stores version info in modelo field (e.g., "HR-V PRIME 1.8 CVT")
+  // Extract base model first: "HR-V PRIME 1.8 CVT" → "HR-V"
+  normalized = extractMapfreBaseModelo(marca, normalized);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // APPLY INLINE MODELO NORMALIZATION (Issues #1-3 Fix)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Now apply standard normalization to the extracted base modelo
+  // Mapfre origin data: Has version contamination in modelo field
+
+  // Issue #1: HONDA hyphenation normalization
+  if (marcaUpper === "HONDA") {
+    // Normalize spaces to hyphens first
+    normalized = normalized.replace(/\bHR\s+V\b/g, "HR-V");
+    normalized = normalized.replace(/\bBR\s+V\b/g, "BR-V");
+    normalized = normalized.replace(/\bCR\s+V\b/g, "CR-V");
+    // Then normalize no-hyphen to hyphenated
+    normalized = normalized.replace(/\bHRV\b/g, "HR-V");
+    normalized = normalized.replace(/\bBRV\b/g, "BR-V");
+    normalized = normalized.replace(/\bCRV\b/g, "CR-V");
+  }
+
+  // Issue #2: MAZDA brand prefix removal & hyphenation
+  if (marcaUpper === "MAZDA") {
+    // Remove "MAZDA " brand prefix at start
+    normalized = normalized.replace(/^MAZDA\s+/gi, "");
+    // Normalize space variants to hyphenated
+    normalized = normalized.replace(/\bCX\s+(\d+)\b/g, "CX-$1");
+    normalized = normalized.replace(/\bMX\s+(\d+)\b/g, "MX-$1");
+    // Normalize no-hyphen to hyphenated
+    normalized = normalized.replace(/\bCX(\d+)\b/g, "CX-$1");
+    normalized = normalized.replace(/\bMX(\d+)\b/g, "MX-$1");
+  }
+
+  // Issue #3: VOLKSWAGEN JETTA generation prefix removal
+  if (marcaUpper === "VOLKSWAGEN") {
+    // Remove generation codes: MKVII, MK VII, GEN. 7, A7, etc.
+    normalized = normalized.replace(/\s*MK\s*VII?I?/gi, "");
+    normalized = normalized.replace(/\s*MKVII?I?/gi, "");
+    normalized = normalized.replace(/\s*GEN\.?\s*\d+/gi, "");
+    normalized = normalized.replace(/\s*A[4-7]\b/gi, "");
+  }
+
+  // Remove NUEVO/NUEVA/NEW prefix (NEW FIX from Design.md)
+  normalized = normalized.replace(/^NUEVO\s+/gi, "");
+  normalized = normalized.replace(/^NUEVA\s+/gi, "");
+  normalized = normalized.replace(/^NEW\s+/gi, "");
+
+  // Remove specs from modelo using MODELO_SPECS_TO_REMOVE
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    normalized = normalized.replace(pattern, " ");
+  });
+
+  // Remove content in parentheses (e.g., "JETTA (DERBY)" -> "JETTA")
+  normalized = normalized.replace(/\([^)]+\)/g, " ");
 
   // Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK)
   normalized = normalized.replace(/^PICK\s*UP\s+/gi, "");
@@ -2083,6 +2508,9 @@ function normalizeModelo(marca, modelo) {
   );
   normalized = normalized.replace(/\s+(DOBLE|SENCILLA)\s+CABINA$/gi, "");
 
+  // FIX 1: BMW SERIE cleanup (applies to all insurers)
+  normalized = cleanBMWModelo(marca, normalized);
+
   // Clean up multiple spaces and trim
   normalized = normalized.replace(/\s+/g, " ").trim();
 
@@ -2107,55 +2535,174 @@ function createCommercialHash(vehicle) {
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
+ * MAPFRE FIELD MAPPING
+ * ═══════════════════════════════════════════════════════════════════════════
+ * MAPFRE uses different field names than standard format:
+ * - modelo_version_completo → needs to be split into modelo + version
+ * - version_corta → version details
+ * - transmision → already correct
+ */
+function mapMapfreFields(record) {
+  // MAPFRE provides: modelo_version_completo = "EV BLACK BEV TA"
+  // We need: modelo = "EV BLACK", version_original = "BEV TA"
+
+  const modeloVersionCompleto = (record.modelo_version_completo || "")
+    .toString()
+    .trim();
+  const versionCorta = (record.version_corta || "").toString().trim();
+
+  // Extract modelo and version from modelo_version_completo
+  // Strategy: version_corta contains the version part, so we can subtract it from modelo_version_completo
+  let modelo = "";
+  let versionOriginal = "";
+
+  if (modeloVersionCompleto && versionCorta) {
+    // Remove version_corta from modelo_version_completo to get modelo
+    const versionCortaNorm = normalizeText(versionCorta);
+    const modeloVersionNorm = normalizeText(modeloVersionCompleto);
+
+    // Find where version_corta appears in modelo_version_completo
+    const versionIndex = modeloVersionNorm.indexOf(versionCortaNorm);
+
+    if (versionIndex !== -1) {
+      // Split at the version start
+      modelo = modeloVersionCompleto.substring(0, versionIndex).trim();
+      versionOriginal = modeloVersionCompleto.substring(versionIndex).trim();
+    } else {
+      // Fallback: Use version_corta as-is, and modelo_version_completo minus last 2 tokens
+      const tokens = modeloVersionCompleto.split(/\s+/);
+      const versionTokens = versionCorta.split(/\s+/);
+      const modeloTokens = tokens.slice(
+        0,
+        tokens.length - versionTokens.length
+      );
+
+      modelo = modeloTokens.join(" ");
+      versionOriginal = versionCorta;
+    }
+  } else if (modeloVersionCompleto) {
+    // No version_corta, split modelo_version_completo heuristically
+    // Assume first 1-2 tokens are modelo, rest is version
+    const tokens = modeloVersionCompleto.split(/\s+/);
+    if (tokens.length === 1) {
+      modelo = tokens[0];
+      versionOriginal = "BASE";
+    } else if (tokens.length === 2) {
+      modelo = tokens[0];
+      versionOriginal = tokens[1];
+    } else {
+      // Take first 2 tokens as modelo, rest as version
+      modelo = tokens.slice(0, 2).join(" ");
+      versionOriginal = tokens.slice(2).join(" ");
+    }
+  } else {
+    // No data at all - will fail validation later
+    modelo = "";
+    versionOriginal = "";
+  }
+
+  // Ensure version_original has content
+  if (!versionOriginal || versionOriginal.trim() === "") {
+    versionOriginal = versionCorta || modelo || "BASE";
+  }
+
+  return {
+    ...record,
+    modelo: modelo,
+    version_original: versionOriginal,
+  };
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
  * FUNCIÓN PRINCIPAL DE PROCESAMIENTO CON VALIDACIÓN ROBUSTA
  * ═══════════════════════════════════════════════════════════════════════════
  */
 function processMapfreRecord(record) {
+  // STEP 0: Map MAPFRE fields to standard format
+  const mappedRecord = mapMapfreFields(record);
+
   const parsedSegments = parseMapfreVersionSegments(
-    record.version_original || ""
+    mappedRecord.version_original || ""
   );
 
-  const transmissionFromSegment =
-    normalizeTransmission(parsedSegments.transmissionSegment || "") ||
-    inferTransmissionFromVersion(parsedSegments.transmissionSegment || "");
+  // Use enhanced transmission recovery function
+  const recoveredTransmission = recoverTransmission(mappedRecord);
+  if (!recoveredTransmission) {
+    throw new Error(
+      "TRANSMISSION_INFERENCE_FAILED: Cannot recover transmission from field or version"
+    );
+  }
 
-  const transmissionFromField = normalizeTransmission(record.transmision || "");
+  mappedRecord.transmision = recoveredTransmission;
 
-  const transmissionFromVersion = inferTransmissionFromVersion(
-    record.version_original || ""
+  // STEP 1: Extract specs from modelo before cleaning
+  const modeloSpecs = [];
+  const originalModelo = (mappedRecord.modelo || "").toUpperCase().trim();
+
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    const match = originalModelo.match(pattern);
+    if (match && match[0]) {
+      modeloSpecs.push(match[0]);
+    }
+  });
+
+  // Also extract content in parentheses
+  const parenMatch = originalModelo.match(/\(([^)]+)\)/);
+  if (parenMatch && parenMatch[1]) {
+    modeloSpecs.push(parenMatch[1]);
+  }
+
+  // STEP 2: Enhance version with extracted specs (applied to version_original)
+  if (modeloSpecs.length > 0) {
+    const enhancement = modeloSpecs.join(" ");
+    mappedRecord.version_original = `${enhancement} ${
+      mappedRecord.version_original || ""
+    }`.trim();
+  }
+
+  let marcaNormalizada = normalizeBrand(mappedRecord.marca || "");
+  marcaNormalizada = consolidateBrand(marcaNormalizada);
+
+  // Skip records with invalid brands
+  if (marcaNormalizada === "INVALID_BRAND") {
+    throw new Error(
+      "Invalid brand category: AUTOS/MOTOCICLETAS/MULTIMARCA/LEGALIZADO"
+    );
+  }
+
+  const modeloBase = extractBaseModel(
+    mappedRecord.modelo || "",
+    marcaNormalizada
   );
 
-  let derivedTransmission =
-    transmissionFromField || transmissionFromSegment || transmissionFromVersion;
-
-  if (!derivedTransmission) {
-    derivedTransmission = "AUTO";
-  }
-
-  if (derivedTransmission !== "AUTO" && derivedTransmission !== "MANUAL") {
-    const reNormalized = normalizeTransmission(derivedTransmission);
-    derivedTransmission = reNormalized || "AUTO";
-  }
-
-  if (derivedTransmission.length > 20) {
-    derivedTransmission = derivedTransmission.substring(0, 20).trim();
-  }
-
-  record.transmision = derivedTransmission;
-
-  const marcaNormalizada = normalizeBrand(record.marca || "");
-  const modeloBase = extractBaseModel(record.modelo || "", marcaNormalizada);
+  // SAFETY: Ensure modeloBase is never empty - use original modelo if extraction fails
+  const modeloBaseSafe =
+    modeloBase ||
+    normalizeText(mappedRecord.modelo || "").split(" ")[0] ||
+    "UNKNOWN";
 
   const mercedesProcessed = processMercedesBenzModel(
     marcaNormalizada,
-    modeloBase,
-    record.version_original || ""
+    modeloBaseSafe,
+    mappedRecord.version_original || ""
   );
   const modeloFinal = mercedesProcessed.modelo;
   const versionParaProcesar = mercedesProcessed.version;
 
+  // SAFETY: Ensure modeloFinal is never empty
+  if (!modeloFinal || modeloFinal.trim() === "") {
+    throw new Error(
+      `MODEL_EXTRACTION_FAILED: Cannot extract valid model from '${mappedRecord.modelo}'`
+    );
+  }
+
   const versionCompleta = reconstructFullVersion(
-    record.modelo || "",
+    mappedRecord.modelo || "",
     versionParaProcesar,
     marcaNormalizada,
     modeloFinal
@@ -2164,12 +2711,14 @@ function processMapfreRecord(record) {
   const segmentDoorData = extractDoorsAndOccupants(
     parsedSegments.doorsSegment || ""
   );
-  const fullDoorData = extractDoorsAndOccupants(record.version_original || "");
+  const fullDoorData = extractDoorsAndOccupants(
+    mappedRecord.version_original || ""
+  );
   const doors = segmentDoorData.doors || fullDoorData.doors;
   const occupants = segmentDoorData.occupants || fullDoorData.occupants;
 
   const validation = validateRecord({
-    ...record,
+    ...mappedRecord,
     marca: marcaNormalizada,
     modelo: modeloFinal,
   });
@@ -2242,34 +2791,40 @@ function processMapfreRecord(record) {
     .replace(/\s+/g, " ")
     .trim();
 
+  // SAFETY: If versionLimpia is empty after aggressive cleaning, use a minimal version
   if (!versionLimpia) {
-    throw new Error("Normalization produced empty version_limpia");
+    // Try to salvage something from the original version
+    const salvaged = normalizeText(mappedRecord.version_original || "")
+      .split(" ")
+      .filter((token) => token && token.length > 1)
+      .slice(0, 3) // Take first 3 tokens
+      .join(" ");
+
+    if (salvaged) {
+      versionLimpia = salvaged;
+    } else {
+      // Last resort: use modelo as version
+      versionLimpia = modeloFinal || "BASE";
+    }
   }
 
-  if (
-    !derivedTransmission ||
-    (derivedTransmission !== "AUTO" && derivedTransmission !== "MANUAL")
-  ) {
-    throw new Error(
-      `Invalid transmission after normalization: '${derivedTransmission}'. Must be AUTO or MANUAL.`
-    );
-  }
-
-  if (derivedTransmission.length > 20) {
-    throw new Error(
-      `Transmission exceeds 20 characters: '${derivedTransmission}' (${derivedTransmission.length} chars)`
-    );
-  }
+  // Normalize modelo but ensure it's never empty
+  const modeloNormalizado = normalizeModelo(marcaNormalizada, modeloFinal);
+  const modeloFinalSafe =
+    modeloNormalizado && modeloNormalizado.trim() !== ""
+      ? modeloNormalizado
+      : modeloFinal; // Fallback to un-normalized if normalization removes everything
 
   const baseNormalized = {
     origen_aseguradora: "MAPFRE",
-    id_original: record.id_original,
+    id_original: mappedRecord.id_original,
     marca: marcaNormalizada,
-    modelo: normalizeModelo(marcaNormalizada, modeloFinal),
-    anio: record.anio,
-    transmision: derivedTransmission,
-    version_original: record.version_original,
+    modelo: modeloFinalSafe,
+    anio: mappedRecord.anio,
+    transmision: mappedRecord.transmision,
+    version_original: mappedRecord.version_original,
     version_limpia: versionLimpia,
+    activo: mappedRecord.activo || true,
     fecha_procesamiento: new Date().toISOString(),
   };
 

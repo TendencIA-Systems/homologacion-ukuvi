@@ -1,18 +1,128 @@
 /**
  * El Potosi ETL - Normalization Code Node (FIXED)
- *
- * CORRECCIONES APLICADAS:
- * - MINI COOPER: Marca → BMW, Modelo → MINI COOPER
- * - Volvo: Eliminar espacio en modelos (XC 60 → XC60)
- * - Mazda: Eliminar MAZDA del modelo
- * - Jaguar: Eliminar JAGUAR del modelo
- * - Mercedes Benz: Eliminar MERCEDES del modelo
- * - Separar AUT pegado a otros specs
- * - NUEVO/NEW: Eliminar del modelo
- * - PASAJEROS: Eliminar del modelo
  */
 
 const crypto = require("crypto");
+
+// Specs to remove from MODELO field (should be in VERSION)
+const MODELO_SPECS_TO_REMOVE = [
+  "VAN",
+  "WAGON",
+  "SEDAN",
+  "HATCHBACK",
+  "HATCH BACK",
+  "COUPE",
+  "CONVERTIBLE",
+  "SUV",
+  "CROSSOVER",
+  "CROSS COUNTRY",
+  "PICK UP",
+  "PICKUP",
+  "RS",
+  "GT",
+  "GTI",
+  "GTS",
+  "AMG",
+  "SRT",
+  "S-LINE",
+  "R-LINE",
+  "M-SPORT",
+  "TYPE-R",
+  "TYPE-S",
+  "A-SPEC",
+  "NISMO",
+  "TRD",
+  "CROSS",
+  "SPORT",
+  "LUXURY",
+  "LIMITED",
+  "EXECUTIVE",
+  "PREMIUM",
+  "DERBY",
+  "NUEVO",
+  "NUEVA",
+  "NEW",
+  "JOYLONG",
+  "EDITION",
+  "SPECIAL",
+  "ANNIVERSARY",
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MODELO NORMALIZATION (Fix for Issues #1-4)
+// ═══════════════════════════════════════════════════════════════════════════
+
+function cleanBMWModelo(marca, modelo) {
+  if (!modelo) return modelo;
+
+  if (marca && marca.toUpperCase().trim() === "BMW") {
+    modelo = modelo.replace(/^SERIE\s+/i, "").trim();
+  }
+
+  return modelo;
+}
+
+/**
+ * Fix 2C: Remove space before trim codes (ELPOTOSI-specific)
+ * Found in sample data analysis: 8 records with "120 I", "118 I" pattern
+ */
+function fixELPOTOSITrimSpacing(marca, modelo) {
+  if (!marca || !modelo) return modelo;
+
+  // Only apply to BMW
+  if (marca.toUpperCase().trim() === "BMW") {
+    // Remove space before I or IA suffix at end of string
+    modelo = modelo.replace(/(\d+)\s+(I[A]?)\s*$/i, "$1$2").trim();
+  }
+
+  return modelo;
+}
+
+/**
+ * Fix: BMW/MINI brand separation (ELPOTOSI-specific)
+ * ELPOTOSI stores MINI vehicles under BMW brand with modelo="MINI COOPER"
+ * This function separates them to marca="MINI", modelo="COOPER"
+ */
+function fixELPOTOSIMINIBrand(marca, modelo) {
+  if (!marca || !modelo) return { marca, modelo };
+
+  if (
+    marca.toUpperCase().trim() === "BMW" &&
+    modelo.toUpperCase().includes("MINI")
+  ) {
+    marca = "MINI";
+    modelo = modelo.replace(/^MINI\s+/i, "").trim();
+  }
+
+  return { marca, modelo };
+}
+
+/**
+ * Fix: Move SDRIVE/XDRIVE from modelo to version (ELPOTOSI-specific)
+ */
+function cleanELPOTOSIDriveSuffix(marca, modelo, version) {
+  if (!marca || !modelo) return { modelo, version };
+
+  // Only apply to BMW
+  if (marca.toUpperCase().trim() === "BMW") {
+    // Check for SDRIVE/XDRIVE suffix
+    const driveMatch = modelo.match(/\s+(SDRIVE|XDRIVE)\s*$/i);
+    if (driveMatch) {
+      const driveType = driveMatch[1].toUpperCase();
+
+      // Remove from modelo
+      modelo = modelo.replace(/\s+(SDRIVE|XDRIVE)\s*$/i, "").trim();
+
+      // Add to version if not already there
+      version = version || "";
+      if (!version.toUpperCase().includes(driveType)) {
+        version = `${driveType} ${version}`.trim();
+      }
+    }
+  }
+
+  return { modelo, version };
+}
 
 const BATCH_SIZE = 5000;
 
@@ -80,8 +190,36 @@ const CATALOGO_MAESTRO_MARCAS_MODELOS = {
   JAGUAR: ["E-PACE", "F-PACE", "F-TYPE", "I-PACE", "XE", "XF", "XJ", "XK"],
 };
 
+// Brand consolidation map for data quality standardization
+const BRAND_CONSOLIDATION_MAP = {
+  // Suffix removal
+  "BMW BW": "BMW",
+  "VOLKSWAGEN VW": "VOLKSWAGEN",
+  "CHEVROLET GM": "CHEVROLET",
+  "FORD FR": "FORD",
+  "AUDI II": "AUDI",
+
+  // Variant consolidation
+  "KIA MOTORS": "KIA",
+  "TESLA MOTORS": "TESLA",
+  "MERCEDES BENZ II": "MERCEDES BENZ",
+  "NISSAN II": "NISSAN",
+  "GREAT WALL MOTORS": "GREAT WALL",
+
+  // Typo correction
+  BERCEDES: "MERCEDES BENZ",
+  BUIK: "BUICK",
+
+  // Invalid brands (flag for deletion)
+  AUTOS: "INVALID_BRAND",
+  MOTOCICLETAS: "INVALID_BRAND",
+  MULTIMARCA: "INVALID_BRAND",
+  LEGALIZADO: "INVALID_BRAND",
+};
+
 const ELPOTOSI_BRAND_ALIASES = {
-  MINI: "BMW", // CORRECCIÓN: MINI → BMW
+  MINI: "MINI", // MINI vehicles must be stored under MINI brand, not BMW
+  "BMW MINI": "MINI",
 };
 
 const CANONICAL_TRANSMISSIONS = new Set(["AUTO", "MANUAL"]);
@@ -165,65 +303,242 @@ const TRANSMISSION_DEFINITIONS = [
 
 const ELPOTOSI_NORMALIZATION_DICTIONARY = {
   irrelevant_comfort_audio: [
-    "ABS",
-    "CA",
-    "CE",
-    "CD",
-    "CB",
-    "CQ",
-    "SQ",
-    "EQ",
-    "A/A",
-    "E/E",
-    "A A",
-    "E E",
+    // Audio/Navegación
     "AA",
+    "A/A",
     "EE",
-    "B/A",
-    "B A",
-    "Q/C",
-    "Q C",
-    "QC",
-    "BA",
-    "PIEL",
-    "TELA",
-    "VINIL",
-    "ALUMINIO",
-    "ALARM",
-    "ALARMA",
-    "RADIO",
-    "STEREO",
-    "MP3",
+    "E/E",
+    "E.E.",
+    "CD",
     "DVD",
     "GPS",
     "BT",
     "USB",
+    "MP3",
+    "AM",
+    "RA",
+    "FX",
+    "BOSE",
+    "HIFI",
+    "HARMAN KARDON",
+    "HARMAN/KARDON",
+    "BEATS",
+    "JBL",
+    "ALPINE",
+    "SONY",
+    "SIS/NAV",
+    "SIS.NAV.",
+    "SIS.NAV",
+    "SIS NAV",
+    "SIS.NAVEGACION",
+    "SIST.NAV",
+    "SIST NAV",
+    "PAQ.NAVEG",
+    "PAQ NAVEG",
+    "PAQ.NAVEGACION",
+    "PAQ NAV",
+    "NAVEGACION",
+    "NAVEG",
+    "NAV.",
     "NAV",
     "NAVI",
-    "CAM",
-    "CAMARA",
-    "CAM TRAS",
-    "SENSOR",
-    "SENSORES",
-    "PARK",
-    "PARKTRONIC",
+    "NAVIGATOR",
+    "RCD",
+    "RNS",
+    "MIB",
+    "MMI",
+    "REPRODUCTOR",
+    "PANTALLA",
+    "TOUCH SCREEN",
+    "TOUCHSCREEN",
+    "DISPLAY",
+    "MONITOR",
+    "BLUETOOTH",
+    "AUX",
+    "RADIO",
+    "STEREO",
+    "ESTEREO",
+    "SOUND SYSTEM",
+    "SISTEMA AUDIO",
+    "AUDIO PREMIUM",
+    "PREMIUM SOUND",
+    // Confort
+    "PIEL",
+    "CUERO",
+    "LEATHER",
+    "TELA",
+    "ALCANTARA",
+    "GAMUZA",
+    "VINYL",
+    "VINIL",
+    "ASIENTOS ELECTRICOS",
+    "ASIENTOS ELECT",
+    "QUEMACOCOS",
+    "TECHO SOLAR",
+    "SUNROOF",
+    "S/ROOF",
+    "PANORAMIC",
+    "PANORAMICO",
+    "CLIMATIZADOR",
+    "CLIMA DUAL",
+    "BI-ZONA",
+    "BIZONA",
+    "CALEFACCION",
+    "VENTILACION",
+    "ASIENTOS CALEFACTABLES",
+    "ASIENTO GIRATORIO",
     "CLIMA",
     "CLIMATRONIC",
-    "D/T",
-    "D T",
-    "D/V",
-    "D V",
-    "DIS",
-    "PADDLE",
     "KEYLESS",
+    "CRUISE",
+    "PARKING",
+    "PADDLE",
+    "SUSPENSION",
     "PUSH",
     "START",
     "BOTON",
     "ENCENDIDO",
-    "PREMIUM SOUND",
-    "0TON",
+    // Safety (abreviaturas)
+    "BA",
+    "B/A",
+    "ABS",
+    "QC",
+    "Q/C",
+    "Q.C.",
+    "VP",
+    "V/P",
+    "CA",
+    "C/A",
+    "A/C",
+    "AC",
+    "CE",
+    "SQ",
+    "CB",
+    "CQ",
+    "EQ",
+    "SM",
+    "VT",
+    "DIS",
+    "TAM",
+    "EBD",
+    "ESP",
+    "VSC",
+    "TCS",
+    "PARK",
+    "PARKTRONIC",
+    "ALARM",
+    "ALARMA",
+    // Luces/Faros
+    "XENON",
+    "BIXENON",
+    "BI-XENON",
+    "LED",
+    "HALOGENO",
+    "HALOGENOS",
+    "FOG",
+    "HID",
+    "LUCES LED",
+    "FAROS LED",
+    // Ruedas
+    "R13",
+    "R14",
+    "R15",
+    "R16",
+    "R17",
+    "R18",
+    "R19",
+    "R20",
+    "R21",
+    "R22",
+    "R23",
+    "RIN 13",
+    "RIN 14",
+    "RIN 15",
+    "RIN 16",
+    "RIN 17",
+    "RIN 18",
+    "RIN 19",
+    "RIN 20",
+    "RIN 21",
+    "RIN 22",
+    "ALEACION",
+    "ALUMINIO",
+    "LLANTAS ALEACION",
+    "RUEDAS ALEACION",
     "RHYNE",
     "RHYNE SIZE",
+    // Transmisión (redundantes)
+    "STD",
+    "STD.",
+    "STANDARD",
+    "AUT",
+    "AUT.",
+    "AUTO",
+    "AUTOMATICA",
+    "AUTOMATICO",
+    "AUTOMATIC",
+    "CVT",
+    "DSG",
+    "S TRONIC",
+    "S-TRONIC",
+    "R TRONIC",
+    "TIPTRONIC",
+    "TIPTRNIC",
+    "SELESPEED",
+    "SALESPEED",
+    "Q-TRONIC",
+    "DCT",
+    "MULTITRONIC",
+    "STEPTRONIC",
+    "GEARTRONIC",
+    "STRONIC",
+    "SECUENCIAL",
+    "DRIVELOGIC",
+    "DUALOGIC",
+    "SPEEDSHIFT",
+    "G-TRONIC",
+    "G TRONIC",
+    "SPORTSHIFT",
+    "TOUCHTRONIC3",
+    "PDK",
+    "MULTITRO",
+    "MANUAL",
+    // Paquetes
+    "PAQ.",
+    "PAQ",
+    "PACK",
+    "PKG",
+    "PACKAGE",
+    "KIT",
+    "EQUIP.",
+    "EQUIP",
+    "EQUIPAMIENTO",
+    "AS DE",
+    "QCC",
+    // Otros
+    "DH",
+    "C",
+    "FBX",
+    "IMP",
+    "T.S",
+    "T.P.",
+    "D/T",
+    "D T",
+    "D/V",
+    "D V",
+    "CAM",
+    "CAM TRAS",
+    "CAM. TRAS",
+    "CAMARA TRASERA",
+    "CAMARA",
+    "SENSOR",
+    "SENSORES",
+    "TBO",
+    "FRENOS CERAM",
+    "FRENOS CERAMICA",
+    "0TON",
+    "COMFORT",
+    "CONFORT",
   ],
   cylinder_normalization: {
     L3: "3CIL",
@@ -764,6 +1079,9 @@ function cleanElPotosiModel(rawModel = "", marca = "", originalMarca = "") {
       .replace(/\bL[\s.-]?(\d{3})\b/g, "L$1");
   }
 
+  // Trailing single-letter trim codes: Remove trailing I/A suffixes
+  cleaned = cleaned.replace(/\s+[IA]+$/gi, "");
+
   cleaned = cleaned.replace(/\s+/g, " ").trim();
 
   // Restaurar tokens protegidos
@@ -780,6 +1098,32 @@ function cleanElPotosiModel(rawModel = "", marca = "", originalMarca = "") {
   return cleaned;
 }
 
+/**
+ * Helper function to fix invalid door counts
+ * Removes BMW model numbers, truck notation, and invalid counts (Req 5.3)
+ */
+function fixInvalidDoorCounts(versionStr = "") {
+  let fixed = versionStr;
+
+  // Remove BMW model numbers incorrectly parsed as doors: 300PUERTAS, 320PUERTAS, 328PUERTAS, 335PUERTAS
+  fixed = fixed.replace(
+    /\b(300|320|328|335|340|350|420|428|435|440|535|540|550|650|740|750|760)PUERTAS\b/gi,
+    " "
+  );
+
+  // Fix truck notation: 3500PUERTAS → 4PUERTAS (common truck model number)
+  fixed = fixed.replace(/\b3500PUERTAS\b/gi, "4PUERTAS");
+  fixed = fixed.replace(/\b2500PUERTAS\b/gi, "4PUERTAS");
+  fixed = fixed.replace(/\b1500PUERTAS\b/gi, "4PUERTAS");
+
+  // Remove invalid door counts: 0PUERTAS, 6-9PUERTAS, 100+PUERTAS
+  fixed = fixed.replace(/\b0PUERTAS\b/gi, " ");
+  fixed = fixed.replace(/\b[6-9]PUERTAS\b/gi, " ");
+  fixed = fixed.replace(/\b[1-9]\d{2,}PUERTAS\b/gi, " ");
+
+  return fixed;
+}
+
 function cleanVersionString(versionString = "", brand = "", model = "") {
   if (!versionString || typeof versionString !== "string") return "";
 
@@ -791,11 +1135,21 @@ function cleanVersionString(versionString = "", brand = "", model = "") {
     .replace(/"/g, " ")
     .trim();
 
+  // NEW FIX 1: Remove escape characters (Req 5.1)
+  cleaned = cleaned.replace(/\\"/g, ""); // Remove escaped quotes
+  cleaned = cleaned.replace(/\\\\/g, ""); // Remove backslashes
+  cleaned = cleaned.replace(/[""''\"'\u201C\u201D\u2018\u2019]/g, " "); // All quote types (smart quotes, etc.)
+
   cleaned = applyProtectedTokens(cleaned);
 
   // CORRECCIÓN: Separar AUT cuando está pegado a otros specs (ambas direcciones)
   cleaned = cleaned.replace(/AUT(?=[A-Z0-9])(?!O)/g, "AUT ");
   cleaned = cleaned.replace(/([A-Z0-9])AUT\b/g, "$1 AUT");
+
+  // NEW FIX 2: Separate HP from AUT (Req 5.2)
+  // Example: "170HPAUT" → "170HP AUT"
+  cleaned = cleaned.replace(/(\d+)HPAUT/gi, "$1HP AUT");
+  cleaned = cleaned.replace(/(\d+)HP([A-Z])/gi, "$1HP $2");
 
   cleaned = cleaned.replace(
     ELPOTOSI_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
@@ -842,6 +1196,9 @@ function cleanVersionString(versionString = "", brand = "", model = "") {
     cleaned,
     ELPOTOSI_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio
   );
+
+  // NEW FIX 3: Fix invalid door counts (Req 5.3)
+  cleaned = fixInvalidDoorCounts(cleaned);
 
   // Remove "0 Ton" (useless weight data)
   cleaned = cleaned.replace(/\b0\s*TON\b/gi, "");
@@ -975,11 +1332,60 @@ function inferTransmissionFromVersion(versionOriginal = "") {
 }
 
 /**
+ * Recover transmission from contaminated fields with fallback to version inference
+ * Returns 'AUTO', 'MANUAL', or null (null triggers record discard)
+ */
+function recoverTransmission(record) {
+  const transmisionField =
+    record.transmision?.toString().toUpperCase().trim() || "";
+  const versionOriginal = record.version_original?.toString() || "";
+
+  // Step 1: Try to extract from contaminated transmision field
+  // Valid patterns to look for: AUTO, AUTOMATIC, MANUAL, STD, CVT, DSG, TIPTRONIC, etc.
+  const validPatterns = [
+    "AUTOMATIC",
+    "AUTO",
+    "MANUAL",
+    "STD",
+    "CVT",
+    "DSG",
+    "TIPTRONIC",
+    "STEPTRONIC",
+    "GEARTRONIC",
+    "MULTITRONIC",
+    "S-TRONIC",
+    "STRONIC",
+    "PDK",
+    "POWERSHIFT",
+    "XTRONIC",
+    "IVT",
+    "DCT",
+    "DUAL CLUTCH",
+  ];
+
+  for (const pattern of validPatterns) {
+    if (transmisionField.includes(pattern)) {
+      const normalized = normalizeTransmission(pattern);
+      if (normalized) return normalized;
+    }
+  }
+
+  // Step 2: Infer from version_original
+  const inferred = inferTransmissionFromVersion(versionOriginal);
+  if (inferred) {
+    return inferred;
+  }
+
+  // Step 3: Cannot recover - return null (record will be discarded)
+  return null;
+}
+
+/**
  * Detecta si un token es una especificación con número
  * Ejemplos: "5PUERTAS", "4CIL", "2.0L", "200HP", "7OCUP"
  */
 function isNumericSpecification(token) {
-  if (!token || typeof token !== 'string') return false;
+  if (!token || typeof token !== "string") return false;
   return /^\d+(\.\d+)?(PUERTAS?|OCUP|CIL|HP|L|KG|TON|PAX)$/i.test(token);
 }
 
@@ -999,7 +1405,7 @@ function deduplicateTokens(tokens) {
 
     // Caso 1: Especificaciones numéricas (5PUERTAS, 4CIL, etc)
     if (isNumericSpecification(normalized)) {
-      const specType = normalized.replace(/^\d+(\.\d+)?/, '');
+      const specType = normalized.replace(/^\d+(\.\d+)?/, "");
       if (seen.has(`spec_${specType}`)) return;
       seen.set(`spec_${specType}`, normalized);
       dedupedTokens.push(normalized);
@@ -1040,10 +1446,24 @@ function normalizeText(value) {
     : "";
 }
 
+/**
+ * Consolidate brand variations to canonical names
+ */
+function consolidateBrand(marca) {
+  if (!marca) return "";
+  const normalized = normalizeText(marca);
+  return BRAND_CONSOLIDATION_MAP[normalized] || normalized;
+}
+
 function normalizeMarca(value, originalMarca) {
   const normalized = normalizeText(value);
   if (!normalized) return "";
-  return ELPOTOSI_BRAND_ALIASES[normalized] || normalized;
+
+  // Apply brand consolidation first
+  const consolidated = consolidateBrand(normalized);
+
+  // Then apply El Potosi-specific aliases
+  return ELPOTOSI_BRAND_ALIASES[consolidated] || consolidated;
 }
 
 function validateRecord(record) {
@@ -1089,7 +1509,7 @@ function categorizeError(error) {
 /**
  * Normalize modelo field to remove contamination patterns before hash generation
  * Fixes issue where "PICK UP SILVERADO" vs "SILVERADO" create different hashes
- * Enhanced to remove single-letter trim codes and cab type specifications
+ * Enhanced with brand-specific cleanup and El Potosí-specific rules (Req 7.6)
  */
 function normalizeModelo(marca, modelo) {
   if (!modelo || typeof modelo !== "string") return "";
@@ -1097,10 +1517,78 @@ function normalizeModelo(marca, modelo) {
   let normalized = modelo.toUpperCase().trim();
   const marcaUpper = (marca || "").toUpperCase().trim();
 
-  // 1. Remove NUEVO/NUEVA/NEW prefix (already handled in cleanElPotosiModel, but ensuring consistency)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // APPLY INLINE MODELO NORMALIZATION (Issues #1-4 Fix)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Issue #1: HONDA hyphenation normalization
+  if (marcaUpper === "HONDA") {
+    // Normalize spaces to hyphens first
+    normalized = normalized.replace(/\bHR\s+V\b/g, "HR-V");
+    normalized = normalized.replace(/\bBR\s+V\b/g, "BR-V");
+    normalized = normalized.replace(/\bCR\s+V\b/g, "CR-V");
+    // Then normalize no-hyphen to hyphenated
+    normalized = normalized.replace(/\bHRV\b/g, "HR-V");
+    normalized = normalized.replace(/\bBRV\b/g, "BR-V");
+    normalized = normalized.replace(/\bCRV\b/g, "CR-V");
+  }
+
+  // Issue #2: MAZDA brand prefix removal & hyphenation
+  if (marcaUpper === "MAZDA") {
+    // Remove "MAZDA " prefix
+    normalized = normalized.replace(/^MAZDA\s+/gi, "");
+    // Normalize spaces to hyphens
+    normalized = normalized.replace(/\bCX\s+(\d+)\b/g, "CX-$1");
+    normalized = normalized.replace(/\bMX\s+(\d+)\b/g, "MX-$1");
+    // Normalize no-hyphen to hyphenated
+    normalized = normalized.replace(/\bCX(\d+)\b/g, "CX-$1");
+    normalized = normalized.replace(/\bMX(\d+)\b/g, "MX-$1");
+  }
+
+  // Issue #3: VOLKSWAGEN JETTA generation prefix removal
+  if (marcaUpper === "VOLKSWAGEN") {
+    normalized = normalized.replace(/\s*MK\s*VII?I?/gi, "");
+    normalized = normalized.replace(/\s*MKVII?I?/gi, "");
+    normalized = normalized.replace(/\s*GEN\.?\s*\d+/gi, "");
+    normalized = normalized.replace(/\s*A[4-7]\b/gi, "");
+  }
+
+  // 1. Remove NUEVO/NUEVA/NEW prefix (Req 4.1)
   normalized = normalized.replace(/^(NUEVO|NUEVA|NEW)\s+/gi, "");
 
-  // Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK)
+  // Remove specs from modelo using MODELO_SPECS_TO_REMOVE
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    normalized = normalized.replace(pattern, " ");
+  });
+
+  // Remove content in parentheses
+  normalized = normalized.replace(/\([^)]+\)/g, " ");
+
+  // 2. Mazda-specific: Remove "MAZDA" or "MA" prefix (Req 4.2, 7.6)
+  if (marcaUpper === "MAZDA") {
+    normalized = normalized.replace(/^MAZDA\s+/gi, "");
+    normalized = normalized.replace(/^MA\s+/gi, "");
+  }
+
+  // 3. Mercedes-specific: Remove "MERCEDES" prefix and fix KLASSE (Req 4.2-4.3, 7.6)
+  if (marcaUpper === "MERCEDES BENZ" || marcaUpper === "MERCEDES") {
+    normalized = normalized.replace(/^MERCEDES\s+(BENZ\s+)?/gi, "");
+    normalized = normalized.replace(/\bKLASSE\b/gi, "CLASE");
+  }
+
+  // 4. BMW-specific: Fix SERIE X5 (Req 4.7)
+  if (marcaUpper === "BMW") {
+    if (normalized === "SERIE X5") {
+      return "X5";
+    }
+    normalized = normalized.replace(/^SERIE\s+([A-Z0-9]+)/gi, "$1");
+  }
+
+  // Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK) (Req 4.4)
   normalized = normalized.replace(/^PICK\s*UP\s+/gi, "");
   normalized = normalized.replace(/^PICK-UP\s+/gi, "");
   normalized = normalized.replace(/^CAMIONETA\s+/gi, "");
@@ -1116,19 +1604,19 @@ function normalizeModelo(marca, modelo) {
     normalized = normalized.replace(brandPattern, "");
   }
 
-  // 2. Remove trim level/generation from modelo (MK VII, GEN 4)
+  // Remove trim level/generation from modelo (MK VII, GEN 4)
   normalized = normalized.replace(/\s+(MK\s*VII?I?|MKVII?I?|GEN\s*\d+)$/gi, "");
 
-  // 3. Remove body type from modelo (SEDAN, SUV, etc.)
+  // Remove body type from modelo (SEDAN, SUV, etc.) (Req 4.3)
   normalized = normalized.replace(
     /\s+(SEDAN|HATCHBACK|SUV|COUPE|CONVERTIBLE|PICKUP|VAN|WAGON)$/gi,
     ""
   );
 
-  // 4. Collapse spaces in letter+number models (A 3 → A3, E TRON → E-TRON)
+  // Collapse spaces in letter+number models (A 3 → A3, E TRON → E-TRON)
   normalized = normalized.replace(/^([A-Z])\s+([A-Z0-9])/g, "$1$2");
 
-  // 4b. E-TRON needs hyphen (special case)
+  // E-TRON needs hyphen (special case)
   normalized = normalized.replace(/\bETRON\b/g, "E-TRON");
 
   // Remove single letter trim codes (e.g., "C 1500" → "1500", "M 350" → "350")
@@ -1155,6 +1643,13 @@ function normalizeModelo(marca, modelo) {
     ""
   );
   normalized = normalized.replace(/\s+(DOBLE|SENCILLA)\s+CABINA$/gi, "");
+
+  // FIX 1: BMW SERIE cleanup (applies to all insurers)
+  // FIX 2C: ELPOTOSI-specific trim spacing fix (discovered in sample data analysis)
+  normalized = fixELPOTOSITrimSpacing(marca, normalized);
+
+  // FIX 1: BMW SERIE cleanup (applies to all insurers)
+  normalized = cleanBMWModelo(marca, normalized);
 
   // Clean up multiple spaces and trim
   normalized = normalized.replace(/\s+/g, " ").trim();
@@ -1183,11 +1678,68 @@ function processElPotosiRecord(record) {
   const versionOriginal = record.version_original
     ? record.version_original.toString()
     : "";
-  const derivedTransmission =
-    normalizeTransmission(record.transmision) ||
-    inferTransmissionFromVersion(versionOriginal);
 
-  record.transmision = derivedTransmission;
+  // Apply enhanced transmission recovery with fallback
+  const recoveredTransmission = recoverTransmission({
+    transmision: record.transmision,
+    version_original: versionOriginal,
+  });
+
+  if (!recoveredTransmission) {
+    throw new Error(
+      "TRANSMISSION_INFERENCE_FAILED: Cannot recover transmission from either field"
+    );
+  }
+
+  record.transmision = recoveredTransmission;
+
+  // ELPOTOSI-SPECIFIC FIXES - Apply BEFORE other normalization
+  // Fix 1: BMW/MINI brand separation
+  const brandFix = fixELPOTOSIMINIBrand(
+    record.marca || "",
+    record.modelo || ""
+  );
+  record.marca = brandFix.marca;
+  record.modelo = brandFix.modelo;
+
+  // Fix 2: SDRIVE/XDRIVE removal from modelo to version
+  const driveFix = cleanELPOTOSIDriveSuffix(
+    record.marca || "",
+    record.modelo || "",
+    versionOriginal
+  );
+  record.modelo = driveFix.modelo;
+  let versionForProcessing = driveFix.version;
+
+  // Fix 3: Trim code spacing (e.g., "118 I" → "118I")
+  record.modelo = fixELPOTOSITrimSpacing(record.marca, record.modelo);
+
+  // STEP 1: Extract specs from modelo before cleaning
+  const modeloSpecs = [];
+  const originalModelo = (record.modelo || "").toUpperCase().trim();
+
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    const match = originalModelo.match(pattern);
+    if (match && match[0]) {
+      modeloSpecs.push(match[0]);
+    }
+  });
+
+  // Also extract content in parentheses
+  const parenMatch = originalModelo.match(/\(([^)]+)\)/);
+  if (parenMatch && parenMatch[1]) {
+    modeloSpecs.push(parenMatch[1]);
+  }
+
+  // STEP 2: Enhance version with extracted specs
+  let enhancedVersion = versionForProcessing || versionOriginal;
+  if (modeloSpecs.length > 0) {
+    enhancedVersion = `${modeloSpecs.join(" ")} ${enhancedVersion}`.trim();
+  }
 
   const { doors, occupants } = extractDoorsAndOccupants(versionOriginal);
 
@@ -1213,7 +1765,7 @@ function processElPotosiRecord(record) {
   }
 
   let versionLimpia = cleanVersionString(
-    versionOriginal,
+    enhancedVersion,
     marcaNormalizada || "",
     modeloFinal || ""
   );

@@ -9,8 +9,53 @@
 
 const crypto = require("crypto");
 
+// Specs to remove from MODELO field (should be in VERSION)
+const MODELO_SPECS_TO_REMOVE = [
+  "VAN",
+  "WAGON",
+  "SEDAN",
+  "HATCHBACK",
+  "HATCH BACK",
+  "COUPE",
+  "CONVERTIBLE",
+  "SUV",
+  "CROSSOVER",
+  "CROSS COUNTRY",
+  "PICK UP",
+  "PICKUP",
+  "RS",
+  "GT",
+  "GTI",
+  "GTS",
+  "AMG",
+  "SRT",
+  "S-LINE",
+  "R-LINE",
+  "M-SPORT",
+  "TYPE-R",
+  "TYPE-S",
+  "A-SPEC",
+  "NISMO",
+  "TRD",
+  "CROSS",
+  "SPORT",
+  "LUXURY",
+  "LIMITED",
+  "EXECUTIVE",
+  "PREMIUM",
+  "DERBY",
+  "NUEVO",
+  "NUEVA",
+  "NEW",
+  "JOYLONG",
+  "EDITION",
+  "SPECIAL",
+  "ANNIVERSARY",
+];
+
 const AXA_NORMALIZATION_DICTIONARY = {
   irrelevant_comfort_audio: [
+    // Audio/Navegación
     "AA",
     "EE",
     "CD",
@@ -23,6 +68,71 @@ const AXA_NORMALIZATION_DICTIONARY = {
     "RA",
     "FX",
     "BOSE",
+    "HARMAN KARDON",
+    "HARMAN/KARDON",
+    "BEATS",
+    "JBL",
+    "ALPINE",
+    "SONY",
+    "SIS/NAV",
+    "SIS.NAV.",
+    "SIS NAV",
+    "SIS.NAVEGACION",
+    "SIST.NAV",
+    "SIST NAV",
+    "PAQ.NAVEG",
+    "PAQ NAVEG",
+    "PAQ.NAVEGACION",
+    "PAQ NAV",
+    "NAVEGACION",
+    "NAVEG",
+    "NAV.",
+    "NAV",
+    "NAVEGADOR",
+    "NAVI",
+    "NAVIGATOR",
+    "RCD",
+    "RNS",
+    "MIB",
+    "MMI",
+    "REPRODUCTOR",
+    "PANTALLA",
+    "TOUCH SCREEN",
+    "TOUCHSCREEN",
+    "DISPLAY",
+    "MONITOR",
+    "BLUETOOTH",
+    "AUX",
+    "RADIO",
+    "STEREO",
+    "ESTEREO",
+    "SOUND SYSTEM",
+    "SISTEMA AUDIO",
+    "AUDIO PREMIUM",
+    // Confort
+    "PIEL",
+    "CUERO",
+    "LEATHER",
+    "TELA",
+    "ALCANTARA",
+    "GAMUZA",
+    "VINYL",
+    "ASIENTOS ELECTRICOS",
+    "ASIENTOS ELECT",
+    "QUEMACOCOS",
+    "TECHO SOLAR",
+    "SUNROOF",
+    "PANORAMIC",
+    "PANORAMICO",
+    "CLIMATIZADOR",
+    "CLIMA DUAL",
+    "BI-ZONA",
+    "BIZONA",
+    "CALEFACCION",
+    "VENTILACION",
+    "ASIENTOS CALEFACTABLES",
+    "ASIENTO GIRATORIO",
+    // Safety (abreviaturas)
     "BA",
     "ABS",
     "QC",
@@ -30,14 +140,6 @@ const AXA_NORMALIZATION_DICTIONARY = {
     "Q.C.",
     "VP",
     "V/P",
-    "PIEL",
-    "GAMUZA",
-    "TELA",
-    "ALCANTARA",
-    "CUERO",
-    "XENON",
-    "LED",
-    "BI-XENON",
     "CA",
     "C/A",
     "A/C",
@@ -45,25 +147,47 @@ const AXA_NORMALIZATION_DICTIONARY = {
     "CE",
     "SQ",
     "CB",
-    "SIS/NAV",
-    "SIS.NAV.",
-    "NAV",
-    "NAVEG",
-    "NAVEGACION",
-    "NAVEGADOR",
-    "T.S",
-    "T.P.",
-    "FBX",
-    "CAM TRAS",
-    "TBO",
-    "SENSOR",
-    "CAMARA",
-    "FRENOS CERAM",
-    "FRENOS CERAMICA",
-    "COMFORT",
-    "CONFORT",
+    "CQ",
+    "SM",
+    "VT",
+    "DIS",
+    "TAM",
+    "EBD",
+    "ESP",
+    "VSC",
+    "TCS",
+    // Ruedas
+    "R13",
+    "R14",
+    "R15",
+    "R16",
+    "R17",
+    "R18",
+    "R19",
+    "R20",
+    "R21",
+    "R22",
+    "R23",
+    "RIN 13",
+    "RIN 14",
+    "RIN 15",
+    "RIN 16",
+    "RIN 17",
+    "RIN 18",
+    "RIN 19",
+    "RIN 20",
+    "RIN 21",
+    "RIN 22",
+    "ALEACION",
+    "ALUMINIO",
+    "LLANTAS ALEACION",
+    "RUEDAS ALEACION",
+    "RHYNE",
+    "RHYNE SIZE",
+    // Transmisión (redundantes) + Transmission specs for inference then removal
     "STD",
     "STD.",
+    "STANDARD",
     "AUT",
     "AUT.",
     "AUTO",
@@ -79,23 +203,59 @@ const AXA_NORMALIZATION_DICTIONARY = {
     "TIPTRNIC",
     "SELESPEED",
     "SALESPEED",
-    "SPORTSHIFT",
-    "TOUCHTRONIC3",
     "Q-TRONIC",
     "DCT",
     "MULTITRONIC",
     "STEPTRONIC",
     "GEARTRONIC",
-    "STRONIC",
+    "STRONIC",      // Audi DSG transmission (289 occurrences in AXA)
+    "XTRONIC",      // Nissan CVT transmission (8 occurrences in AXA)
+    "X-TRONIC",     // Nissan CVT hyphenated variant (1 occurrence in AXA)
     "SECUENCIAL",
     "DRIVELOGIC",
     "DUALOGIC",
     "SPEEDSHIFT",
     "G-TRONIC",
     "G TRONIC",
+    "SPORTSHIFT",
+    "TOUCHTRONIC3",
     "PDK",
     "MULTITRO",
     "MANUAL",
+    // Paquetes
+    "PAQ.",
+    "PAQ",
+    "PACK",
+    "PKG",
+    "PACKAGE",
+    "KIT",
+    "EQUIP.",
+    "EQUIP",
+    "EQUIPAMIENTO",
+    "AS DE",
+    "QCC",
+    // Otros
+    "DH",
+    "C",
+    "FBX",
+    "IMP",
+    "T.S",
+    "T.P.",
+    "CAM TRAS",
+    "CAMARA TRASERA",
+    "SENSOR",
+    "SENSORES",
+    "TBO",
+    "FRENOS CERAM",
+    "FRENOS CERAMICA",
+    "XENON",
+    "LED",
+    "BI-XENON",
+    "BIXENON",
+    "LUCES LED",
+    "FAROS LED",
+    "COMFORT",
+    "CONFORT",
   ],
   cylinder_normalization: {
     L3: "3CIL",
@@ -120,8 +280,6 @@ const AXA_NORMALIZATION_DICTIONARY = {
     B6: "6CIL",
   },
   transmission_normalization: {
-    1: "MANUAL",
-    2: "AUTO",
     1: "MANUAL",
     2: "AUTO",
     STD: "MANUAL",
@@ -149,7 +307,9 @@ const AXA_NORMALIZATION_DICTIONARY = {
     "S TRONIC": "AUTO",
     "S-TRONIC": "AUTO",
     "R TRONIC": "AUTO",
-    STRONIC: "AUTO",
+    STRONIC: "AUTO",        // Audi DSG - for inference before removal
+    XTRONIC: "AUTO",        // Nissan CVT - for inference before removal
+    "X-TRONIC": "AUTO",     // Nissan CVT hyphenated - for inference before removal
     TIPTRONIC: "AUTO",
     TIPTRNIC: "AUTO",
     SELESPEED: "AUTO",
@@ -252,6 +412,50 @@ const PROTECTED_HYPHEN_TOKENS = [
   },
 ];
 
+/**
+ * AXA-specific protected space-separated trims (19 unique trims)
+ * These trims must be protected from being split during normalization
+ * Based on actual data analysis - see CORRECTED-TRIM-LIST.md
+ */
+const PROTECTED_SPACED_TRIMS_AXA = [
+  // M-series (universal - present in ALL insurers)
+  'M SPORT',
+
+  // I-series Mazda (AXA, Atlas, HDI, El Potosí, GNP, Zurich)
+  'I GRAND TOURING',  // ⭐ AXA-specific! 26 occurrences - explicitly requested
+  'I TOURING',
+  'I SPORT',
+  'I LUXURY',
+
+  // R-series Honda (AXA, Chubb, El Potosí)
+  'R TOURING',
+  'R SPORT',
+  'R LUXURY',
+
+  // S-series
+  'S SPORT',
+
+  // Letter + SPORT
+  'A SPORT',
+  'F SPORT',
+  'K SPORT',
+  'T SPORT',
+
+  // Letter + LUXURY
+  'V LUXURY',
+
+  // Letter + PREMIUM
+  'E PREMIUM',
+  'C PREMIUM',
+  'L PREMIUM',
+
+  // Letter + ELEGANCE
+  'K ELEGANCE',
+
+  // Other
+  'E SELECT',
+];
+
 const LEGITIMATE_TRIM_TOKENS = new Set([
   "TECH",
   "ADVANCE",
@@ -303,6 +507,38 @@ function restoreProtectedTokens(value = "") {
     output = output.replace(placeholderRegex, canonical);
   });
   return output;
+}
+
+/**
+ * Protects actual vehicle trim levels from being corrupted during normalization
+ * AXA-specific: 19 unique trims including I GRAND TOURING (explicitly requested)
+ * Handles multi-space variants (e.g., "M  SPORT" with double/triple spaces)
+ */
+function protectTrims(version) {
+  if (!version) return version;
+
+  let protected = version;
+
+  // Protect hyphenated trims (already handled by existing PROTECTED_HYPHEN_TOKENS)
+  // A-SPEC, TYPE-S, TYPE-R, etc.
+
+  // Protect space-separated trims (with multi-space handling)
+  PROTECTED_SPACED_TRIMS_AXA.forEach(trim => {
+    const placeholder = trim.replace(/\s+/g, '_SPACE_');
+    // Regex handles "M SPORT", "M  SPORT", "M   SPORT" (multiple spaces)
+    const pattern = trim.replace(/\s+/g, '\\s+');
+    protected = protected.replace(new RegExp(`\\b${pattern}\\b`, 'gi'), placeholder);
+  });
+
+  return protected;
+}
+
+/**
+ * Restores protected trim levels to their canonical format
+ */
+function restoreTrims(version) {
+  if (!version) return version;
+  return version.replace(/_SPACE_/g, ' ');
 }
 
 function normalizeCylinders(versionString = "") {
@@ -524,7 +760,11 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   if (!versionString || typeof versionString !== "string") return "";
 
   let cleaned = versionString.toUpperCase().trim();
+  // STAGE 5: TRIM PROTECTION - protect hyphenated trims first
   cleaned = applyProtectedTokens(cleaned);
+  // STAGE 5: TRIM PROTECTION - protect space-separated trims
+  cleaned = protectTrims(cleaned);
+
   cleaned = cleaned.replace(/[\/,]/g, " ");
   cleaned = cleaned.replace(/-/g, " ");
   cleaned = cleaned.replace(/AUT(?=[A-Z0-9])(?!O)/g, "AUT ");
@@ -545,6 +785,7 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
     " "
   );
 
+  // STAGE 6: SPEC NORMALIZATION
   cleaned = normalizeDrivetrain(cleaned);
   cleaned = normalizeTurboTokens(cleaned);
   cleaned = applyEngineAliases(cleaned);
@@ -561,11 +802,13 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   cleaned = cleaned.replace(/\b(\d+)\s*CC\b/g, "$1CC");
   cleaned = cleaned.replace(/\b(\d+\.\d+)I\b/g, "$1L");
 
+  // STAGE 7: GARBAGE REMOVAL (includes STRONIC, XTRONIC after inference)
   AXA_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio.forEach((spec) => {
     const regex = new RegExp(`\\b${escapeRegex(spec)}\\b`, "gi");
     cleaned = cleaned.replace(regex, " ");
   });
 
+  // STAGE 7: REMOVE BODY TYPES
   if (model) {
     cleaned = cleaned.replace(
       new RegExp(`\\b${escapeRegex(model.toUpperCase())}\\b`, "gi"),
@@ -608,10 +851,15 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   cleaned = cleaned.replace(/(?<!\d)[.,](?!\d)/g, " ");
   cleaned = cleaned.replace(/\bL\b/g, " ");
 
+  // STAGE 9: FINAL CLEANUP
   cleaned = cleaned.replace(multiple_spaces, " ");
   cleaned = cleaned.replace(trim_spaces, "");
 
+  // STAGE 8: TRIM RESTORATION - restore hyphenated trims first
   cleaned = restoreProtectedTokens(cleaned);
+  // STAGE 8: TRIM RESTORATION - restore space-separated trims
+  cleaned = restoreTrims(cleaned);
+
   cleaned = cleaned.replace(/CIL(?=\d)/g, "CIL ");
   cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s*HP\b/g, "$1HP");
   cleaned = cleaned.replace(/\s+/g, " ").trim();
@@ -784,6 +1032,12 @@ function processAxaRecord(record) {
     throw new Error("Validation failed: registro inactivo");
   }
 
+  // AXA-SPECIFIC: Filter out GENERICA placeholder records (STAGE 1)
+  if (record.version_original && record.version_original.toUpperCase().trim() === 'GENERICA') {
+    throw new Error("Validation failed: GENERICA placeholder record");
+  }
+
+  // STAGE 2: BRAND/MODEL NORMALIZATION
   const marcaNormalizada = normalizeMarca(record.marca);
   const { model: modeloNormalizado, extras: modeloExtras } = cleanAxaModel(
     record.modelo,
@@ -791,15 +1045,43 @@ function processAxaRecord(record) {
   );
   const modeloFinal = modeloNormalizado || normalizeText(record.modelo);
 
+  // STAGE 4: TRANSMISSION INFERENCE (BEFORE removal!)
+  // CRITICAL: Must infer transmission from version_original BEFORE cleanVersionString removes specs
+  // Transmission specs (STRONIC, XTRONIC, etc.) will be removed in STAGE 7
   const derivedTransmission =
     normalizeTransmission(record.transmision) ||
     normalizeTransmission(record.transmision_codigo) ||
     inferTransmissionFromVersion(record.version_original || "");
   record.transmision = derivedTransmission;
 
-  const { doors, occupants } = extractDoorsAndOccupants(
-    record.version_original || ""
-  );
+  // STEP 1: Extract specs from modelo before cleaning
+  const modeloSpecs = [];
+  const originalModelo = (record.modelo || "").toUpperCase().trim();
+
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    const match = originalModelo.match(pattern);
+    if (match && match[0]) {
+      modeloSpecs.push(match[0]);
+    }
+  });
+
+  // Also extract content in parentheses
+  const parenMatch = originalModelo.match(/\(([^)]+)\)/);
+  if (parenMatch && parenMatch[1]) {
+    modeloSpecs.push(parenMatch[1]);
+  }
+
+  // STEP 2: Enhance version with extracted specs
+  let enhancedVersion = record.version_original || "";
+  if (modeloSpecs.length > 0) {
+    enhancedVersion = `${modeloSpecs.join(" ")} ${enhancedVersion}`.trim();
+  }
+
+  const { doors, occupants } = extractDoorsAndOccupants(enhancedVersion);
 
   const validation = validateRecord({
     ...record,
@@ -812,8 +1094,8 @@ function processAxaRecord(record) {
   }
 
   const versionSeed = modeloExtras
-    ? `${modeloExtras} ${record.version_original || ""}`.trim()
-    : record.version_original || "";
+    ? `${modeloExtras} ${enhancedVersion}`.trim()
+    : enhancedVersion;
 
   let versionLimpia = cleanVersionString(
     versionSeed,
@@ -918,6 +1200,18 @@ function normalizeModelo(marca, modelo) {
 
   // 1. Remove NUEVO/NUEVA/NEW prefix (already covered in cleanAxaModel, but ensuring consistency)
   normalized = normalized.replace(/^(NUEVO|NUEVA|NEW)\s+/gi, "");
+
+  // 2. Remove specs from modelo using MODELO_SPECS_TO_REMOVE
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    normalized = normalized.replace(pattern, " ");
+  });
+
+  // 3. Remove content in parentheses (e.g., "JETTA (DERBY)" -> "JETTA")
+  normalized = normalized.replace(/\([^)]+\)/g, " ");
 
   // Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK)
   normalized = normalized.replace(/^PICK\s*UP\s+/gi, "");

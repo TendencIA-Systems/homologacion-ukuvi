@@ -1,0 +1,131 @@
+{
+  "issue1": {
+    "status": "❌ FAIL",
+    "contamination_rate": "1.20%",
+    "total_contaminated": 246,
+    "total_records": 20505,
+    "by_pattern": {
+      "SERIE_prefix": 0,
+      "SDRIVE_suffix": 0,
+      "XDRIVE_suffix": 0,
+      "single_letter_trim": 246,
+      "TUR_suffix": 0,
+      "TURBO_suffix": 0
+    },
+    "samples": {
+      "single_letter_trim": [
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2006",
+          "version": "200 SPORT TURBO MINIVAN 193HP 2.0L 4CIL 5PUERTAS 5"
+        },
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2006",
+          "version": "200 SPORT TURBO PAQ CONFORT MINIVAN 193HP 2.0L 4CI"
+        },
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2007",
+          "version": "200 MINIVAN 136HP 2.0L 4CIL 5PUERTAS 5OCUP"
+        },
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2007",
+          "version": "200 PAQ CONFORT MINIVAN 193HP 2.0L 4CIL 5PUERTAS 5"
+        },
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2007",
+          "version": "200 MINIVAN 136HP 2.0L 4CIL 5PUERTAS 5OCUP"
+        },
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2007",
+          "version": "200 PAQ CONFORT MINIVAN 193HP 2.0L 4CIL 5PUERTAS 5"
+        },
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2008",
+          "version": "200 SPORT TURBO MINIVAN 193HP 2.0L 4CIL 5PUERTAS 5"
+        },
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2008",
+          "version": "200 MINIVAN 136HP 2.0L 4CIL 5PUERTAS 5OCUP"
+        },
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2008",
+          "version": "200 PAQ CONFORT MINIVAN 193HP 2.0L 4CIL 5PUERTAS 5"
+        },
+        {
+          "marca": "MERCEDES BENZ",
+          "modelo": "CLASE B",
+          "anio": "2008",
+          "version": "200 MINIVAN 136HP 2.0L 4CIL 5PUERTAS 5OCUP"
+        }
+      ]
+    }
+  },
+  "issue2": {
+    "status": "✅ PASS",
+    "bmw_with_mini": 0,
+    "mini_brand_total": 427,
+    "mini_with_prefix": 0,
+    "mini_variants": {
+      "COOPER": 427
+    },
+    "samples_bmw_mini": []
+  },
+  "issue3": {
+    "status": "✅ PASS",
+    "bmw_m_single": 0,
+    "bmw_x_single": 0,
+    "audi_s_single": 0,
+    "audi_r_single": 0,
+    "total_single_letter": 0,
+    "samples": {
+      "bmw_m": [],
+      "bmw_x": [],
+      "audi_s": []
+    }
+  },
+  "qa_transmission": {
+    "invalid_count": 0,
+    "contamination_rate": "0.00%",
+    "top_invalid": {},
+    "samples": []
+  },
+  "qa_brands": {
+    "total_issues": 0,
+    "by_brand": {}
+  },
+  "qa_escaping": {
+    "backslash_count": 0,
+    "quotes_count": 0,
+    "samples": []
+  },
+  "client_cases": {
+    "acura_ilx_2017": 2,
+    "vw_jetta_2012": 17
+  },
+  "summary": {
+    "total_records": 20505,
+    "primary_fixes_passed": "2/3",
+    "issue1_pass": false,
+    "issue2_pass": true,
+    "issue3_pass": true,
+    "overall_status": "❌ ISSUES FOUND",
+    "production_ready": "NO"
+  }
+}

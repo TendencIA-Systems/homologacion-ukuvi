@@ -3,6 +3,7 @@
 /data/pipeline-result/
 .venv
 src/inngest/__pycache__
+*.csv
 
 # macOS
 .DS_Store

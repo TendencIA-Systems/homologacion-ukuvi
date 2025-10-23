@@ -9,6 +9,126 @@
 
 const crypto = require("crypto");
 
+// Specs to remove from MODELO field (should be in VERSION)
+const MODELO_SPECS_TO_REMOVE = [
+  "VAN",
+  "WAGON",
+  "SEDAN",
+  "HATCHBACK",
+  "HATCH BACK",
+  "COUPE",
+  "CONVERTIBLE",
+  "SUV",
+  "CROSSOVER",
+  "CROSS COUNTRY",
+  "PICK UP",
+  "PICKUP",
+  "RS",
+  "GT",
+  "GTI",
+  "GTS",
+  "AMG",
+  "SRT",
+  "S-LINE",
+  "R-LINE",
+  "M-SPORT",
+  "TYPE-R",
+  "TYPE-S",
+  "A-SPEC",
+  "NISMO",
+  "TRD",
+  "CROSS",
+  "SPORT",
+  "LUXURY",
+  "LIMITED",
+  "EXECUTIVE",
+  "PREMIUM",
+  "DERBY",
+  "NUEVO",
+  "NUEVA",
+  "NEW",
+  "JOYLONG",
+  "EDITION",
+  "SPECIAL",
+  "ANNIVERSARY",
+];
+
+/**
+ * Fix 1: Remove SERIE prefix from BMW models
+ * Critical fix - applies to all insurers
+ */
+function cleanBMWModelo(marca, modelo) {
+  if (!modelo) return modelo;
+
+  // Only apply to BMW marca
+  if (marca && marca.toUpperCase().trim() === "BMW") {
+    // Remove "SERIE " prefix (case insensitive)
+    modelo = modelo.replace(/^SERIE\s+/i, "").trim();
+  }
+
+  return modelo;
+}
+
+/**
+ * Fix: BMW/MINI brand separation (BX-specific)
+ * BX stores MINI vehicles under BMW brand with modelo="MINI CONVERTIBLE", "MINI COOPER", etc.
+ * This function separates them to marca="MINI", modelo="CONVERTIBLE", "COOPER", etc.
+ */
+function fixBXMINIBrand(marca, modelo) {
+  if (!marca || !modelo) return { marca, modelo };
+
+  if (
+    marca.toUpperCase().trim() === "BMW" &&
+    modelo.toUpperCase().includes("MINI")
+  ) {
+    marca = "MINI";
+    modelo = modelo.replace(/^MINI\s+/i, "").trim();
+  }
+
+  return { marca, modelo };
+}
+
+/**
+ * Fix: Remove space before BMW trim codes (e.g., "118 I" → "118I")
+ */
+function fixBXTrimSpacing(marca, modelo) {
+  if (!marca || !modelo) return modelo;
+
+  if (marca.toUpperCase().trim() === "BMW") {
+    // Remove space before I or IA suffix at end of string
+    modelo = modelo.replace(/(\d+)\s+(I[A]?)\s*$/i, "$1$2").trim();
+  }
+
+  return modelo;
+}
+
+/**
+ * Fix: Move SDRIVE/XDRIVE from modelo to version (BX-specific)
+ */
+function cleanBXDriveSuffix(marca, modelo, version) {
+  if (!marca || !modelo) return { modelo, version };
+
+  // Only apply to BMW
+  if (marca.toUpperCase().trim() === "BMW") {
+    // Check for SDRIVE/XDRIVE suffix
+    const driveMatch = modelo.match(/\s+(SDRIVE|XDRIVE)\s*$/i);
+    if (driveMatch) {
+      const driveType = driveMatch[1].toUpperCase();
+
+      // Remove from modelo
+      modelo = modelo.replace(/\s+(SDRIVE|XDRIVE)\s*$/i, "").trim();
+
+      // Add to version if not already there
+      version = version || "";
+      if (!version.toUpperCase().includes(driveType)) {
+        version = `${driveType} ${version}`.trim();
+      }
+    }
+  }
+
+  return { modelo, version };
+}
+
 const BATCH_SIZE = 5000;
 
 const CANONICAL_TRANSMISSIONS = new Set(["AUTO", "MANUAL"]);
@@ -90,12 +210,42 @@ const TRANSMISSION_DEFINITIONS = [
   },
 ];
 
+const BRAND_CONSOLIDATION_MAP = {
+  // Suffix removal
+  "BMW BW": "BMW",
+  "VOLKSWAGEN VW": "VOLKSWAGEN",
+  "CHEVROLET GM": "CHEVROLET",
+  "FORD FR": "FORD",
+  "AUDI II": "AUDI",
+
+  // Variant consolidation
+  "KIA MOTORS": "KIA",
+  "TESLA MOTORS": "TESLA",
+  "MERCEDES BENZ II": "MERCEDES BENZ",
+  "NISSAN II": "NISSAN",
+  "GREAT WALL MOTORS": "GREAT WALL",
+  MINI: "MINI", // MINI vehicles must be stored under MINI brand, not BMW
+  "BMW MINI": "MINI",
+
+  // Typo correction
+  BERCEDES: "MERCEDES BENZ",
+  BUIK: "BUICK",
+
+  // Invalid brands (flag for deletion)
+  AUTOS: "INVALID_BRAND",
+  MOTOCICLETAS: "INVALID_BRAND",
+  MULTIMARCA: "INVALID_BRAND",
+  LEGALIZADO: "INVALID_BRAND",
+};
+
 const BX_NORMALIZATION_DICTIONARY = {
   irrelevant_comfort_audio: [
+    // Audio/Navegación
     "AA",
     "A/A",
     "EE",
     "E/E",
+    "E.E.",
     "CD",
     "DVD",
     "GPS",
@@ -107,38 +257,110 @@ const BX_NORMALIZATION_DICTIONARY = {
     "FX",
     "BOSE",
     "HIFI",
-    "BA",
-    "ABS",
-    "QC",
-    "VP",
-    "V/P",
-    "PIEL",
-    "GAMUZA",
-    "TELA",
-    "VINIL",
-    "CA",
-    "CE",
-    "CLIMA",
-    "SQ",
-    "CB",
-    "EQ",
+    "HARMAN KARDON",
+    "HARMAN/KARDON",
+    "BEATS",
+    "JBL",
+    "ALPINE",
+    "SONY",
     "SIS/NAV",
     "SIS.NAV.",
     "SIS.NAV",
+    "SIS NAV",
+    "SIS.NAVEGACION",
+    "SIST.NAV",
+    "SIST NAV",
+    "PAQ.NAVEG",
+    "PAQ NAVEG",
+    "PAQ.NAVEGACION",
+    "PAQ NAV",
+    "NAVEGACION",
+    "NAVEG",
+    "NAV.",
     "NAV",
     "NAVI",
-    "CAM",
-    "CAMARA",
-    "CAM TRAS",
-    "CAM. TRAS",
-    "SENSOR",
-    "SENSORES",
+    "NAVIGATOR",
+    "RCD",
+    "RNS",
+    "MIB",
+    "MMI",
+    "REPRODUCTOR",
+    "PANTALLA",
+    "TOUCH SCREEN",
+    "TOUCHSCREEN",
+    "DISPLAY",
+    "MONITOR",
+    "BLUETOOTH",
+    "AUX",
+    "RADIO",
+    "STEREO",
+    "ESTEREO",
+    "SOUND SYSTEM",
+    "SISTEMA AUDIO",
+    "AUDIO PREMIUM",
+    "PREMIUM SOUND",
+    // Confort
+    "PIEL",
+    "CUERO",
+    "LEATHER",
+    "TELA",
+    "ALCANTARA",
+    "GAMUZA",
+    "VINYL",
+    "VINIL",
+    "ASIENTOS ELECTRICOS",
+    "ASIENTOS ELECT",
+    "QUEMACOCOS",
+    "TECHO SOLAR",
+    "SUNROOF",
+    "S/ROOF",
+    "PANORAMIC",
+    "PANORAMICO",
+    "CLIMATIZADOR",
+    "CLIMA DUAL",
+    "BI-ZONA",
+    "BIZONA",
+    "CALEFACCION",
+    "VENTILACION",
+    "ASIENTOS CALEFACTABLES",
+    "ASIENTO GIRATORIO",
+    "CLIMA",
+    "KEYLESS",
+    "CRUISE",
+    "PARKING",
+    "PADDLE",
+    "SUSPENSION",
+    // Safety (abreviaturas)
+    "BA",
+    "B/A",
+    "ABS",
+    "QC",
+    "Q/C",
+    "Q.C.",
+    "VP",
+    "V/P",
+    "CA",
+    "C/A",
+    "A/C",
+    "AC",
+    "CE",
+    "SQ",
+    "CB",
+    "CQ",
+    "EQ",
+    "SM",
+    "VT",
+    "DIS",
+    "TAM",
+    "EBD",
+    "ESP",
+    "VSC",
+    "TCS",
     "PARK",
     "PARKTRONIC",
     "ALARM",
     "ALARMA",
-    "STEREO",
-    "RADIO",
+    // Luces/Faros
     "XENON",
     "BIXENON",
     "BI-XENON",
@@ -147,14 +369,103 @@ const BX_NORMALIZATION_DICTIONARY = {
     "HALOGENOS",
     "FOG",
     "HID",
-    "PREMIUM SOUND",
-    "PANORAMIC",
-    "SUNROOF",
-    "S/ROOF",
-    "COMFORT",
-    "CONFORT",
+    "LUCES LED",
+    "FAROS LED",
+    // Ruedas
+    "R13",
+    "R14",
+    "R15",
+    "R16",
+    "R17",
+    "R18",
+    "R19",
+    "R20",
+    "R21",
+    "R22",
+    "R23",
+    "RIN 13",
+    "RIN 14",
+    "RIN 15",
+    "RIN 16",
+    "RIN 17",
+    "RIN 18",
+    "RIN 19",
+    "RIN 20",
+    "RIN 21",
+    "RIN 22",
+    "ALEACION",
+    "ALUMINIO",
+    "LLANTAS ALEACION",
+    "RUEDAS ALEACION",
     "RHYNE",
     "RHYNE SIZE",
+    // Transmisión (redundantes)
+    "STD",
+    "STD.",
+    "STANDARD",
+    "AUT",
+    "AUT.",
+    "AUTO",
+    "AUTOMATICA",
+    "AUTOMATICO",
+    "AUTOMATIC",
+    "CVT",
+    "DSG",
+    "S TRONIC",
+    "S-TRONIC",
+    "R TRONIC",
+    "TIPTRONIC",
+    "TIPTRNIC",
+    "SELESPEED",
+    "SALESPEED",
+    "Q-TRONIC",
+    "DCT",
+    "MULTITRONIC",
+    "STEPTRONIC",
+    "GEARTRONIC",
+    "STRONIC",
+    "SECUENCIAL",
+    "DRIVELOGIC",
+    "DUALOGIC",
+    "SPEEDSHIFT",
+    "G-TRONIC",
+    "G TRONIC",
+    "SPORTSHIFT",
+    "TOUCHTRONIC3",
+    "PDK",
+    "MULTITRO",
+    "MANUAL",
+    // Paquetes
+    "PAQ.",
+    "PAQ",
+    "PACK",
+    "PKG",
+    "PACKAGE",
+    "KIT",
+    "EQUIP.",
+    "EQUIP",
+    "EQUIPAMIENTO",
+    "AS DE",
+    "QCC",
+    // Otros
+    "DH",
+    "C",
+    "FBX",
+    "IMP",
+    "T.S",
+    "T.P.",
+    "CAM",
+    "CAM TRAS",
+    "CAM. TRAS",
+    "CAMARA TRASERA",
+    "CAMARA",
+    "SENSOR",
+    "SENSORES",
+    "TBO",
+    "FRENOS CERAM",
+    "FRENOS CERAMICA",
+    "COMFORT",
+    "CONFORT",
   ],
   cylinder_normalization: {
     L3: "3CIL",
@@ -550,6 +861,25 @@ function applyEngineAliases(value = "") {
   return output;
 }
 
+function fixInvalidDoorCounts(text) {
+  if (!text || typeof text !== "string") return "";
+
+  // BMW model numbers incorrectly parsed as doors
+  const bmwModelNumbers = ["300", "320", "328", "335"];
+  bmwModelNumbers.forEach((num) => {
+    text = text.replace(new RegExp(`\\b${num}PUERTAS\\b`, "g"), "");
+  });
+
+  // Salvageable truck notation
+  text = text.replace(/\b3500PUERTAS\b/g, "4PUERTAS");
+
+  // Invalid values
+  text = text.replace(/\b[016-9]PUERTAS\b/g, "");
+  text = text.replace(/\b\d{3,}PUERTAS\b/g, "");
+
+  return text;
+}
+
 function cleanVersionString(versionString = "", model = "", brand = "") {
   if (!versionString || typeof versionString !== "string") return "";
 
@@ -558,14 +888,24 @@ function cleanVersionString(versionString = "", model = "", brand = "") {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
-    .replace(/"/g, " ")
     .trim();
+
+  // NEW: Remove escape characters
+  cleaned = cleaned.replace(/\\"/g, ""); // Remove escaped quotes
+  cleaned = cleaned.replace(/\\\\/g, ""); // Remove backslashes
+  cleaned = cleaned.replace(/[""''\"'\u201C\u201D\u2018\u2019]/g, " "); // All quote types
+  cleaned = cleaned.replace(/"/g, " ");
 
   cleaned = applyProtectedTokens(cleaned);
   cleaned = cleaned.replace(
     BX_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
     "$1.$2"
   );
+
+  // NEW: Separate HP from AUT
+  cleaned = cleaned.replace(/(\d+)HPAUT/gi, "$1HP AUT");
+  cleaned = cleaned.replace(/(\d+)HP([A-Z])/gi, "$1HP $2");
+
   cleaned = cleaned.replace(/AUT(?=[A-Z0-9])(?!O)/g, "AUT ");
   cleaned = cleaned.replace(/[\\/]/g, " ");
   cleaned = cleaned.replace(/\s*&\s*/g, " ");
@@ -608,6 +948,9 @@ function cleanVersionString(versionString = "", model = "", brand = "") {
     cleaned,
     BX_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio
   );
+
+  // NEW: Fix invalid door counts before final cleanup
+  cleaned = fixInvalidDoorCounts(cleaned);
 
   cleaned = cleaned
     .replace(/\b0\s*(P(?:TAS?|TS?|TA)?|PUERTAS?|PTS)\b/g, " ")
@@ -803,6 +1146,52 @@ function normalizeText(value) {
     : "";
 }
 
+function consolidateBrand(marca) {
+  if (!marca || typeof marca !== "string") return "";
+  const normalized = marca.toUpperCase().trim();
+  return BRAND_CONSOLIDATION_MAP[normalized] || normalized;
+}
+
+function recoverTransmission(record) {
+  const transmisionField = record.transmision
+    ? record.transmision.toString().toUpperCase().trim()
+    : "";
+
+  // Step 1: Try to extract from contaminated transmision field
+  const validPatterns = [
+    "AUTO",
+    "AUTOMATIC",
+    "MANUAL",
+    "STD",
+    "CVT",
+    "DSG",
+    "TIPTRONIC",
+    "AUTOMATICO",
+    "AUTOMATICA",
+    "ESTANDAR",
+    "MECANICO",
+    "MECANICA",
+  ];
+
+  for (const pattern of validPatterns) {
+    if (transmisionField.includes(pattern)) {
+      const normalized = normalizeTransmission(pattern);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+
+  // Step 2: Infer from version_original
+  const inferred = inferTransmissionFromVersion(record.version_original);
+  if (inferred) {
+    return inferred;
+  }
+
+  // Step 3: Cannot recover - return null (record will be discarded)
+  return null;
+}
+
 function validateRecord(record) {
   const errors = [];
   const year = Number(record.anio);
@@ -854,8 +1243,72 @@ function normalizeModelo(marca, modelo) {
   let normalized = modelo.toUpperCase().trim();
   const marcaUpper = (marca || "").toUpperCase().trim();
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // INLINE MODELO NORMALIZATION (Issues #1-4 Fix)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Issue #1: HONDA hyphenation normalization
+  if (marcaUpper === "HONDA") {
+    // Normalize spaces to hyphens first
+    normalized = normalized.replace(/\bHR\s+V\b/g, "HR-V");
+    normalized = normalized.replace(/\bBR\s+V\b/g, "BR-V");
+    normalized = normalized.replace(/\bCR\s+V\b/g, "CR-V");
+    // Then normalize no-hyphen to hyphenated
+    normalized = normalized.replace(/\bHRV\b/g, "HR-V");
+    normalized = normalized.replace(/\bBRV\b/g, "BR-V");
+    normalized = normalized.replace(/\bCRV\b/g, "CR-V");
+  }
+
+  // Issue #2: MAZDA brand prefix removal & hyphenation (BX has "MAZDA CX-5")
+  if (marcaUpper === "MAZDA") {
+    // Remove "MAZDA " prefix
+    normalized = normalized.replace(/^MAZDA\s+/gi, "");
+    // Normalize spaces to hyphens
+    normalized = normalized.replace(/\bCX\s+(\d+)\b/g, "CX-$1");
+    normalized = normalized.replace(/\bMX\s+(\d+)\b/g, "MX-$1");
+    // Normalize no-hyphen to hyphenated
+    normalized = normalized.replace(/\bCX(\d+)\b/g, "CX-$1");
+    normalized = normalized.replace(/\bMX(\d+)\b/g, "MX-$1");
+  }
+
+  // Issue #3: VOLKSWAGEN JETTA generation prefix removal
+  if (marcaUpper === "VOLKSWAGEN") {
+    normalized = normalized.replace(/\s*MK\s*VII?I?/gi, "");
+    normalized = normalized.replace(/\s*MKVII?I?/gi, "");
+    normalized = normalized.replace(/\s*GEN\.?\s*\d+/gi, "");
+    normalized = normalized.replace(/\s*A[4-7]\b/gi, "");
+  }
+
   // 1. Remove NUEVO/NUEVA/NEW prefix
   normalized = normalized.replace(/^(NUEVO|NUEVA|NEW)\s+/gi, "");
+
+  // Remove specs from modelo using MODELO_SPECS_TO_REMOVE
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    normalized = normalized.replace(pattern, " ");
+  });
+
+  // Remove content in parentheses
+  normalized = normalized.replace(/\([^)]+\)/g, " ");
+
+  // 2. Mazda-specific: Remove MAZDA/MA prefix
+  if (marcaUpper === "MAZDA") {
+    normalized = normalized.replace(/^(MAZDA|MA)\s+/gi, "");
+  }
+
+  // 3. Mercedes-specific: Remove MERCEDES prefix and fix KLASSE
+  if (marcaUpper === "MERCEDES BENZ" || marcaUpper === "MERCEDES") {
+    normalized = normalized.replace(/^MERCEDES\s+(BENZ\s+)?/gi, "");
+    normalized = normalized.replace(/\bKLASSE\b/gi, "CLASE");
+  }
+
+  // 4. BMW-specific: SERIE prefix extraction
+  if (marcaUpper === "BMW" && /^SERIE\s+/.test(normalized)) {
+    normalized = normalized.replace(/^SERIE\s+/, ""); // "SERIE X5" → "X5"
+  }
 
   // Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK)
   normalized = normalized.replace(/^PICK\s*UP\s+/gi, "");
@@ -864,13 +1317,24 @@ function normalizeModelo(marca, modelo) {
   normalized = normalized.replace(/^VAN\s+/gi, "");
   normalized = normalized.replace(/^TRUCK\s+/gi, "");
 
-  // Remove brand name if repeated in model field
+  // BX-specific (Req 7.5): Remove brand name from modelo field
+  // This is more aggressive than the existing pattern - removes brand from anywhere
   if (marcaUpper) {
     const brandPattern = new RegExp(
       `^${marcaUpper.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`,
       "gi"
     );
     normalized = normalized.replace(brandPattern, "");
+
+    // Also remove brand variants (first word of brand)
+    const brandFirstWord = marcaUpper.split(" ")[0];
+    if (brandFirstWord && brandFirstWord.length > 2) {
+      const brandFirstWordPattern = new RegExp(
+        `^${brandFirstWord.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+`,
+        "gi"
+      );
+      normalized = normalized.replace(brandFirstWordPattern, "");
+    }
   }
 
   // 2. Remove trim level/generation from modelo (MK VII, GEN 4)
@@ -912,6 +1376,12 @@ function normalizeModelo(marca, modelo) {
     ""
   );
   normalized = normalized.replace(/\s+(DOBLE|SENCILLA)\s+CABINA$/gi, "");
+
+  // Trailing single-letter trim codes: Remove trailing I/A suffixes (e.g., "SERIE 1 I" → "SERIE 1")
+  normalized = normalized.replace(/\s+[IA]+$/gi, "");
+
+  // FIX 1: BMW SERIE cleanup (applies to all insurers)
+  normalized = cleanBMWModelo(marca, normalized);
 
   // Clean up multiple spaces and trim
   normalized = normalized.replace(/\s+/g, " ").trim();
@@ -961,11 +1431,61 @@ function processBxRecord(record) {
   const versionOriginal = record.version_original
     ? record.version_original.toString()
     : "";
-  const derivedTransmission =
-    normalizeTransmission(record.transmision) ||
-    inferTransmissionFromVersion(versionOriginal);
 
-  record.transmision = derivedTransmission;
+  // Use enhanced transmission recovery
+  const recoveredTransmission = recoverTransmission(record);
+  if (!recoveredTransmission) {
+    throw new Error(
+      "TRANSMISSION_INFERENCE_FAILED: Cannot recover transmission"
+    );
+  }
+
+  record.transmision = recoveredTransmission;
+
+  // BX-SPECIFIC FIXES - Apply BEFORE other normalization
+  // Fix 1: BMW/MINI brand separation
+  const brandFix = fixBXMINIBrand(record.marca || "", record.modelo || "");
+  record.marca = brandFix.marca;
+  record.modelo = brandFix.modelo;
+
+  // Fix 2: SDRIVE/XDRIVE removal from modelo to version
+  const driveFix = cleanBXDriveSuffix(
+    record.marca || "",
+    record.modelo || "",
+    versionOriginal
+  );
+  record.modelo = driveFix.modelo;
+  let versionForProcessing = driveFix.version;
+
+  // Fix 3: Trim code spacing (e.g., "118 I" → "118I")
+  record.modelo = fixBXTrimSpacing(record.marca, record.modelo);
+
+  // STEP 1: Extract specs from modelo before cleaning
+  const modeloSpecs = [];
+  const originalModelo = (record.modelo || "").toUpperCase().trim();
+
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    const match = originalModelo.match(pattern);
+    if (match && match[0]) {
+      modeloSpecs.push(match[0]);
+    }
+  });
+
+  // Also extract content in parentheses
+  const parenMatch = originalModelo.match(/\(([^)]+)\)/);
+  if (parenMatch && parenMatch[1]) {
+    modeloSpecs.push(parenMatch[1]);
+  }
+
+  // STEP 2: Enhance version with extracted specs
+  let enhancedVersion = versionForProcessing || versionOriginal;
+  if (modeloSpecs.length > 0) {
+    enhancedVersion = `${modeloSpecs.join(" ")} ${enhancedVersion}`.trim();
+  }
 
   const { doors, occupants } = extractDoorsAndOccupants(versionOriginal);
 
@@ -978,7 +1498,7 @@ function processBxRecord(record) {
   }
 
   let versionLimpia = cleanVersionString(
-    versionOriginal,
+    enhancedVersion,
     record.modelo || "",
     record.marca || ""
   );
@@ -1050,11 +1570,16 @@ function processBxRecord(record) {
 
   const modeloLimpio = cleanBxModel(record.modelo || "", record.marca || "");
 
+  const marcaConsolidated = consolidateBrand(record.marca);
+  if (marcaConsolidated === "INVALID_BRAND") {
+    throw new Error("INVALID_BRAND: Brand is not valid");
+  }
+
   const normalized = {
     origen_aseguradora: "BX",
     id_original: record.id_original,
-    marca: normalizeText(record.marca),
-    modelo: normalizeModelo(record.marca, modeloLimpio || record.modelo),
+    marca: normalizeText(marcaConsolidated),
+    modelo: normalizeModelo(marcaConsolidated, modeloLimpio || record.modelo),
     anio: record.anio,
     transmision: record.transmision,
     version_original: versionOriginal,

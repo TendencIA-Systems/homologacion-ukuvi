@@ -7,8 +7,53 @@
  */
 const crypto = require("crypto");
 
+// Specs to remove from MODELO field (should be in VERSION)
+const MODELO_SPECS_TO_REMOVE = [
+  "VAN",
+  "WAGON",
+  "SEDAN",
+  "HATCHBACK",
+  "HATCH BACK",
+  "COUPE",
+  "CONVERTIBLE",
+  "SUV",
+  "CROSSOVER",
+  "CROSS COUNTRY",
+  "PICK UP",
+  "PICKUP",
+  "RS",
+  "GT",
+  "GTI",
+  "GTS",
+  "AMG",
+  "SRT",
+  "S-LINE",
+  "R-LINE",
+  "M-SPORT",
+  "TYPE-R",
+  "TYPE-S",
+  "A-SPEC",
+  "NISMO",
+  "TRD",
+  "CROSS",
+  "SPORT",
+  "LUXURY",
+  "LIMITED",
+  "EXECUTIVE",
+  "PREMIUM",
+  "DERBY",
+  "NUEVO",
+  "NUEVA",
+  "NEW",
+  "JOYLONG",
+  "EDITION",
+  "SPECIAL",
+  "ANNIVERSARY",
+];
+
 const ZURICH_NORMALIZATION_DICTIONARY = {
   irrelevant_comfort_audio: [
+    // Audio/Navegación
     "AA",
     "EE",
     "CD",
@@ -21,29 +66,95 @@ const ZURICH_NORMALIZATION_DICTIONARY = {
     "RA",
     "FX",
     "BOSE",
+    "HARMAN KARDON",
+    "HARMAN/KARDON",
+    "BEATS",
+    "JBL",
+    "ALPINE",
+    "SONY",
+    "SIS/NAV",
+    "SIS.NAV.",
+    "SIS NAV",
+    "SIS.NAVEGACION",
+    "SIST.NAV",
+    "SIST NAV",
+    "PAQ.NAVEG",
+    "PAQ NAVEG",
+    "PAQ.NAVEGACION",
+    "PAQ NAV",
+    "NAVEGACION",
+    "NAVEG",
+    "NAV.",
+    "NAV",
+    "NAVI",
+    "NAVIGATOR",
+    "RCD",
+    "RNS",
+    "MIB",
+    "MMI",
+    "REPRODUCTOR",
+    "PANTALLA",
+    "TOUCH SCREEN",
+    "TOUCHSCREEN",
+    "DISPLAY",
+    "MONITOR",
+    "BLUETOOTH",
+    "AUX",
+    "RADIO",
+    "STEREO",
+    "ESTEREO",
+    "SOUND SYSTEM",
+    "SISTEMA AUDIO",
+    "AUDIO PREMIUM",
+    // Confort
+    "PIEL",
+    "CUERO",
+    "LEATHER",
+    "TELA",
+    "ALCANTARA",
+    "GAMUZA",
+    "VINYL",
+    "ASIENTOS ELECTRICOS",
+    "ASIENTOS ELECT",
+    "QUEMACOCOS",
+    "TECHO SOLAR",
+    "SUNROOF",
+    "PANORAMIC",
+    "PANORAMICO",
+    "CLIMATIZADOR",
+    "CLIMA DUAL",
+    "BI-ZONA",
+    "BIZONA",
+    "CALEFACCION",
+    "VENTILACION",
+    "ASIENTOS CALEFACTABLES",
+    "ASIENTO GIRATORIO",
+    // Safety (abreviaturas)
     "BA",
     "ABS",
     "QC",
+    "Q/C",
+    "Q.C.",
     "VP",
-    "PIEL",
-    "GAMUZA",
+    "V/P",
     "CA",
+    "C/A",
+    "A/C",
+    "AC",
     "CE",
     "SQ",
     "CB",
-    "SIS/NAV",
-    "SIS.NAV.",
-    "T.S",
-    "T.P.",
-    "FBX",
-    "DH",
-    "C",
-    "FBX",
-    "IMP",
     "CQ",
-    "TELA",
-    "ASIENTO GIRATORIO",
-    // Wheel/rim sizes
+    "SM",
+    "VT",
+    "DIS",
+    "TAM",
+    "EBD",
+    "ESP",
+    "VSC",
+    "TCS",
+    // Ruedas
+    "R13",
     "R14",
     "R15",
     "R16",
@@ -54,13 +165,39 @@ const ZURICH_NORMALIZATION_DICTIONARY = {
     "R21",
     "R22",
     "R23",
-    // indicadores de transmisión (para limpiar la versión)
+    "RIN 13",
+    "RIN 14",
+    "RIN 15",
+    "RIN 16",
+    "RIN 17",
+    "RIN 18",
+    "RIN 19",
+    "RIN 20",
+    "RIN 21",
+    "RIN 22",
+    "ALEACION",
+    "ALUMINIO",
+    "LLANTAS ALEACION",
+    "RUEDAS ALEACION",
+    "RHYNE",
+    "RHYNE SIZE",
+    // Transmisión (redundantes)
     "STD",
+    "STD.",
+    "STANDARD",
     "AUT",
+    "AUT.",
+    "AUTO",
+    "AUTOMATICA",
+    "AUTOMATICO",
+    "AUTOMATIC",
     "CVT",
     "DSG",
     "S TRONIC",
+    "S-TRONIC",
+    "R TRONIC",
     "TIPTRONIC",
+    "TIPTRNIC",
     "SELESPEED",
     "SALESPEED",
     "Q-TRONIC",
@@ -75,8 +212,45 @@ const ZURICH_NORMALIZATION_DICTIONARY = {
     "SPEEDSHIFT",
     "G-TRONIC",
     "G TRONIC",
-    "RHYNE",
-    "RHYNE SIZE",
+    "SPORTSHIFT",
+    "TOUCHTRONIC3",
+    "PDK",
+    "MULTITRO",
+    "MANUAL",
+    // Paquetes
+    "PAQ.",
+    "PAQ",
+    "PACK",
+    "PKG",
+    "PACKAGE",
+    "KIT",
+    "EQUIP.",
+    "EQUIP",
+    "EQUIPAMIENTO",
+    "AS DE",
+    "QCC",
+    // Otros
+    "DH",
+    "C",
+    "FBX",
+    "IMP",
+    "T.S",
+    "T.P.",
+    "CAM TRAS",
+    "CAMARA TRASERA",
+    "SENSOR",
+    "SENSORES",
+    "TBO",
+    "FRENOS CERAM",
+    "FRENOS CERAMICA",
+    "XENON",
+    "LED",
+    "BI-XENON",
+    "BIXENON",
+    "LUCES LED",
+    "FAROS LED",
+    "COMFORT",
+    "CONFORT",
   ],
   transmission_normalization: {
     STD: "MANUAL",
@@ -522,21 +696,43 @@ function processZurichRecord(record) {
     inferTransmissionFromVersion(record.version_original);
   record.transmision = derivedTransmission;
 
+  // STEP 1: Extract specs from modelo before cleaning
+  const modeloSpecs = [];
+  const originalModelo = (record.modelo || "").toUpperCase().trim();
+
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    const match = originalModelo.match(pattern);
+    if (match && match[0]) {
+      modeloSpecs.push(match[0]);
+    }
+  });
+
+  // Also extract content in parentheses
+  const parenMatch = originalModelo.match(/\(([^)]+)\)/);
+  if (parenMatch && parenMatch[1]) {
+    modeloSpecs.push(parenMatch[1]);
+  }
+
+  // STEP 2: Enhance version with extracted specs
+  let enhancedVersion = record.version_original || "";
+  if (modeloSpecs.length > 0) {
+    enhancedVersion = `${modeloSpecs.join(" ")} ${enhancedVersion}`.trim();
+  }
+
   // MODIFICACIÓN: Limpiar el modelo removiendo "MAZDA" si aplica
   const cleanedModel = cleanZurichModel(record.modelo, record.marca);
 
-  const { doors, occupants } = extractDoorsAndOccupants(
-    record.version_original || ""
-  );
+  const { doors, occupants } = extractDoorsAndOccupants(enhancedVersion);
   const validation = validateRecord(record);
   if (!validation.isValid) {
     throw new Error(`Validation failed: ${validation.errors.join(", ")}`);
   }
 
-  let versionLimpia = cleanVersionString(
-    record.version_original || "",
-    cleanedModel || ""
-  );
+  let versionLimpia = cleanVersionString(enhancedVersion, cleanedModel || "");
   versionLimpia = versionLimpia
     .replace(/\b\d\s*P(?:TAS|TA|TS)?\.?(?=\b)/gi, " ")
     .replace(/\b0?\d+\s*OCUP?\.?\b/gi, " ")
@@ -589,7 +785,19 @@ function normalizeModelo(marca, modelo) {
   // 1. Remove NUEVO/NUEVA/NEW prefix (1,195 cases) - NEW FIX
   normalized = normalized.replace(/^(NUEVO|NUEVA|NEW)\s+/gi, "");
 
-  // 2. Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK) - existing
+  // 2. Remove specs from modelo using MODELO_SPECS_TO_REMOVE
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    normalized = normalized.replace(pattern, " ");
+  });
+
+  // 3. Remove content in parentheses (e.g., "JETTA (DERBY)" -> "JETTA")
+  normalized = normalized.replace(/\([^)]+\)/g, " ");
+
+  // 4. Remove generic prefixes (PICK UP, CAMIONETA, VAN, TRUCK) - existing
   normalized = normalized.replace(/^PICK\s*UP\s+/gi, "");
   normalized = normalized.replace(/^PICK-UP\s+/gi, "");
   normalized = normalized.replace(/^CAMIONETA\s+/gi, "");

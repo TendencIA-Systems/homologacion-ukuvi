@@ -8,6 +8,50 @@
  */
 const crypto = require("crypto");
 
+// Specs to remove from MODELO field (should be in VERSION)
+const MODELO_SPECS_TO_REMOVE = [
+  "VAN",
+  "WAGON",
+  "SEDAN",
+  "HATCHBACK",
+  "HATCH BACK",
+  "COUPE",
+  "CONVERTIBLE",
+  "SUV",
+  "CROSSOVER",
+  "CROSS COUNTRY",
+  "PICK UP",
+  "PICKUP",
+  "RS",
+  "GT",
+  "GTI",
+  "GTS",
+  "AMG",
+  "SRT",
+  "S-LINE",
+  "R-LINE",
+  "M-SPORT",
+  "TYPE-R",
+  "TYPE-S",
+  "A-SPEC",
+  "NISMO",
+  "TRD",
+  "CROSS",
+  "SPORT",
+  "LUXURY",
+  "LIMITED",
+  "EXECUTIVE",
+  "PREMIUM",
+  "DERBY",
+  "NUEVO",
+  "NUEVA",
+  "NEW",
+  "JOYLONG",
+  "EDITION",
+  "SPECIAL",
+  "ANNIVERSARY",
+];
+
 const BATCH_SIZE = 5000;
 
 const CANONICAL_TRANSMISSIONS = new Set(["AUTO", "MANUAL"]);
@@ -104,47 +148,218 @@ const BRAND_ALIASES = {
 
 const HDI_NORMALIZATION_DICTIONARY = {
   irrelevant_comfort_audio: [
+    // Audio/Navegación
+    "AA",
+    "EE",
+    "CD",
+    "DVD",
+    "GPS",
+    "BT",
+    "USB",
+    "MP3",
+    "AM",
+    "RA",
+    "FX",
+    "BOSE",
+    "HARMAN KARDON",
+    "HARMAN/KARDON",
+    "BEATS",
+    "JBL",
+    "ALPINE",
+    "SONY",
+    "SIS/NAV",
+    "SIS.NAV.",
+    "SIS NAV",
+    "SIS.NAVEGACION",
+    "SIST.NAV",
+    "SIST NAV",
+    "PAQ.NAVEG",
+    "PAQ NAVEG",
+    "PAQ.NAVEGACION",
+    "PAQ NAV",
+    "NAVEGACION",
+    "NAVEG",
+    "NAV.",
+    "NAV",
+    "NAVI",
+    "NAVIGATOR",
+    "RCD",
+    "RNS",
+    "MIB",
+    "MMI",
+    "REPRODUCTOR",
+    "PANTALLA",
+    "TOUCH SCREEN",
+    "TOUCHSCREEN",
+    "DISPLAY",
+    "MONITOR",
+    "BLUETOOTH",
+    "AUX",
+    "RADIO",
+    "STEREO",
+    "ESTEREO",
+    "SOUND SYSTEM",
+    "SISTEMA AUDIO",
+    "AUDIO PREMIUM",
+    // Confort
+    "PIEL",
+    "CUERO",
+    "LEATHER",
+    "TELA",
+    "ALCANTARA",
+    "GAMUZA",
+    "VINYL",
+    "ASIENTOS ELECTRICOS",
+    "ASIENTOS ELECT",
+    "QUEMACOCOS",
+    "TECHO SOLAR",
+    "SUNROOF",
+    "PANORAMIC",
+    "PANORAMICO",
+    "CLIMATIZADOR",
+    "CLIMA DUAL",
+    "BI-ZONA",
+    "BIZONA",
+    "CALEFACCION",
+    "VENTILACION",
+    "ASIENTOS CALEFACTABLES",
+    "ASIENTO GIRATORIO",
+    // Safety (abreviaturas)
+    "BA",
     "ABS",
+    "QC",
+    "Q/C",
+    "Q.C.",
+    "VP",
+    "V/P",
     "CA",
+    "C/A",
+    "A/C",
     "AC",
     "CE",
-    "CD",
+    "SQ",
     "CB",
     "CQ",
-    "SQ",
+    "SM",
+    "VT",
+    "DIS",
+    "TAM",
+    "EBD",
+    "ESP",
+    "VSC",
+    "TCS",
+    // Ruedas
+    "R13",
+    "R14",
+    "R15",
+    "R16",
+    "R17",
+    "R18",
+    "R19",
+    "R20",
+    "R21",
+    "R22",
+    "R23",
+    "RIN 13",
+    "RIN 14",
+    "RIN 15",
+    "RIN 16",
+    "RIN 17",
+    "RIN 18",
+    "RIN 19",
+    "RIN 20",
+    "RIN 21",
+    "RIN 22",
+    "ALEACION",
+    "ALUMINIO",
+    "LLANTAS ALEACION",
+    "RUEDAS ALEACION",
+    "RHYNE",
+    "RHYNE SIZE",
+    // Transmisión (redundantes)
+    "STD",
+    "STD.",
+    "STANDARD",
+    "AUT",
+    "AUT.",
+    "AUTO",
+    "AUTOMATICA",
+    "AUTOMATICO",
+    "AUTOMATIC",
+    "CVT",
+    "DSG",
+    "S TRONIC",
+    "S-TRONIC",
+    "R TRONIC",
+    "TIPTRONIC",
+    "TIPTRNIC",
+    "SELESPEED",
+    "SALESPEED",
+    "Q-TRONIC",
+    "DCT",
+    "MULTITRONIC",
+    "STEPTRONIC",
+    "GEARTRONIC",
+    "STRONIC",
+    "SECUENCIAL",
+    "DRIVELOGIC",
+    "DUALOGIC",
+    "SPEEDSHIFT",
+    "G-TRONIC",
+    "G TRONIC",
+    "SPORTSHIFT",
+    "TOUCHTRONIC3",
+    "PDK",
+    "MULTITRO",
+    "MANUAL",
+    // Paquetes
+    "PAQ.",
+    "PAQ",
+    "PACK",
+    "PKG",
+    "PACKAGE",
+    "KIT",
+    "EQUIP.",
+    "EQUIP",
+    "EQUIPAMIENTO",
+    "AS DE",
+    "QCC",
+    // Otros
+    "DH",
+    "C",
+    "FBX",
+    "IMP",
+    "T.S",
+    "T.P.",
+    "CAM TRAS",
+    "CAMARA TRASERA",
+    "SENSOR",
+    "SENSORES",
+    "TBO",
+    "FRENOS CERAM",
+    "FRENOS CERAMICA",
+    "XENON",
+    "LED",
+    "BI-XENON",
+    "BIXENON",
+    "LUCES LED",
+    "FAROS LED",
+    "COMFORT",
+    "CONFORT",
+    // HDI specific tokens (preserved from original)
     "EQ",
     "A/A",
     "A A",
     "E/E",
     "E E",
-    "AA",
-    "EE",
     "B/A",
     "B A",
-    "Q/C",
     "Q C",
-    "QC",
-    "BA",
-    "PIEL",
-    "TELA",
     "VINIL",
-    "ALUMINIO",
     "ALARM",
     "ALARMA",
-    "RADIO",
-    "STEREO",
-    "MP3",
-    "DVD",
-    "GPS",
-    "BT",
-    "USB",
-    "NAV",
-    "NAVI",
     "CAM",
     "CAMARA",
-    "CAM TRAS",
-    "SENSOR",
-    "SENSORES",
     "PARK",
     "PARKTRONIC",
     "CLIMA",
@@ -153,7 +368,6 @@ const HDI_NORMALIZATION_DICTIONARY = {
     "D T",
     "D/V",
     "D V",
-    "DIS",
     "PADDLE",
     "KEYLESS",
     "PUSH",
@@ -162,12 +376,7 @@ const HDI_NORMALIZATION_DICTIONARY = {
     "ENCENDIDO",
     "VE",
     "V.E.",
-    "C/A",
     "S/D",
-    "COMFORT",
-    "CONFORT",
-    "RHYNE",
-    "RHYNE SIZE",
   ],
   cylinder_normalization: {
     L3: "3CIL",
@@ -1007,6 +1216,18 @@ function normalizeModelo(marca, modelo) {
   );
   normalized = normalized.replace(/\s+(DOBLE|SENCILLA)\s+CABINA$/gi, "");
 
+  // Remove specs from modelo using MODELO_SPECS_TO_REMOVE
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    normalized = normalized.replace(pattern, " ");
+  });
+
+  // Remove content in parentheses (e.g., "JETTA (DERBY)" -> "JETTA")
+  normalized = normalized.replace(/\([^)]+\)/g, " ");
+
   // Clean up multiple spaces and trim
   normalized = normalized.replace(/\s+/g, " ").trim();
 
@@ -1047,7 +1268,34 @@ function processHdiRecord(record) {
   );
   const modeloFinal = modeloNormalizado || rawModelNormalized;
 
-  const { doors, occupants } = extractDoorsAndOccupants(versionOriginal);
+  // STEP 1: Extract specs from modelo before cleaning
+  const modeloSpecs = [];
+  const originalModelo = (record.modelo || "").toUpperCase().trim();
+
+  MODELO_SPECS_TO_REMOVE.forEach((spec) => {
+    const pattern = new RegExp(
+      `\\b${spec.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "gi"
+    );
+    const match = originalModelo.match(pattern);
+    if (match && match[0]) {
+      modeloSpecs.push(match[0]);
+    }
+  });
+
+  // Also extract content in parentheses
+  const parenMatch = originalModelo.match(/\(([^)]+)\)/);
+  if (parenMatch && parenMatch[1]) {
+    modeloSpecs.push(parenMatch[1]);
+  }
+
+  // STEP 2: Enhance version with extracted specs
+  let enhancedVersion = versionOriginal || "";
+  if (modeloSpecs.length > 0) {
+    enhancedVersion = `${modeloSpecs.join(" ")} ${enhancedVersion}`.trim();
+  }
+
+  const { doors, occupants } = extractDoorsAndOccupants(enhancedVersion);
 
   const validation = validateRecord({
     ...record,
@@ -1060,8 +1308,8 @@ function processHdiRecord(record) {
   }
 
   const versionSeed = modeloExtras
-    ? `${modeloExtras} ${versionOriginal}`.trim()
-    : versionOriginal;
+    ? `${modeloExtras} ${enhancedVersion}`.trim()
+    : enhancedVersion;
 
   let versionLimpia = cleanVersionString(
     versionSeed,

@@ -1,0 +1,13 @@
+ETL VALIDATION ANALYSIS
+======================
+Date: Sat Oct 18 18:31:11 CST 2025
+
+Total Records: 29662
+
+ISSUE 1: Model Contamination
+============================
+SERIE prefix: 0
+SDRIVE/XDRIVE: 0
+Trailing I/IA: 0
+TURBO suffix: 16
+TOTAL CONTAMINATED: 

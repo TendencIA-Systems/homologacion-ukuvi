@@ -451,8 +451,9 @@ DECLARE
 
     matches JSONB := '[]'::JSONB;
     match_record RECORD;
+    best_match RECORD;
 
-    v_insurers_permitidos_crear TEXT[] := ARRAY['ZURICH', 'HDI'];
+    v_insurers_permitidos_crear TEXT[] := ARRAY['ZURICH', 'HDI']; 
 
     -- Umbrales optimizados (mantenidos de v2.7.8)
     QUALITAS_TIER2_THRESHOLD CONSTANT NUMERIC := 0.45;
@@ -553,34 +554,55 @@ BEGIN
         IF jsonb_array_length(matches) > 0 THEN
             IF jsonb_array_length(matches) > 1 THEN multi_match_count := multi_match_count + 1; END IF;
 
-            FOR match_record IN SELECT * FROM jsonb_to_recordset(matches) AS (id BIGINT, score NUMERIC, tier INT, method TEXT)
-            LOOP
-                UPDATE catalogo_homologado
-                SET disponibilidad = jsonb_set(
-                        COALESCE(disponibilidad, '{}'::jsonb),
-                        ARRAY[v_origen],
-                        jsonb_build_object(
-                            'origen', COALESCE((disponibilidad->v_origen->>'origen')::boolean, FALSE),
-                            'disponible', TRUE,
-                            'aseguradora', v_origen,
-                            'id_original', v_record->>'id_original',
-                            'version_original', v_record->>'version_original',
-                            'confianza_score', match_record.score,
-                            'metodo_match', match_record.method,
-                            'tier', match_record.tier,
-                            'fecha_actualizacion', NOW()
-                        ), TRUE
-                    ),
-                    fecha_actualizacion = NOW()
-                WHERE id = match_record.id;
+            -- Select best match by score, then same_batch preference, then tier
+            SELECT * INTO best_match
+            FROM jsonb_to_recordset(matches) AS m(id BIGINT, score NUMERIC, tier INT, method TEXT)
+            ORDER BY score DESC, (method LIKE '%same_batch%') DESC, tier ASC
+            LIMIT 1;
 
-                update_count := update_count + 1;
-                CASE match_record.tier
-                    WHEN 1 THEN tier1_count := tier1_count + 1;
-                    WHEN 2 THEN tier2_count := tier2_count + 1;
-                    WHEN 3 THEN tier3_count := tier3_count + 1;
-                END CASE;
-            END LOOP;
+            -- Log best-match evaluation
+            RAISE NOTICE 'BEST_MATCH_EVALUATION: Evaluated % candidates for hash=% version=%, selected ID=% (score: %, tier: %, method: %)',
+                jsonb_array_length(matches), v_hash, v_version, best_match.id, best_match.score, best_match.tier, best_match.method;
+
+            -- Warn if multiple candidates have identical highest scores
+            IF (SELECT COUNT(*) FROM jsonb_to_recordset(matches) AS m(id BIGINT, score NUMERIC, tier INT, method TEXT)
+                WHERE m.score = best_match.score) > 1 THEN
+                RAISE WARNING 'BEST_MATCH_TIE: Multiple candidates with identical score % for hash=% version=%: %',
+                    best_match.score, v_hash, v_version, matches;
+            END IF;
+
+            -- Warn if best match is below tier 2 threshold
+            IF best_match.tier > 2 THEN
+                RAISE WARNING 'LOW_TIER_MATCH: Best match for hash=% version=% is tier % with score %, candidates: %',
+                    v_hash, v_version, best_match.tier, best_match.score, matches;
+            END IF;
+
+            -- Update only the best match
+            UPDATE catalogo_homologado
+            SET disponibilidad = jsonb_set(
+                    COALESCE(disponibilidad, '{}'::jsonb),
+                    ARRAY[v_origen],
+                    jsonb_build_object(
+                        'origen', COALESCE((disponibilidad->v_origen->>'origen')::boolean, FALSE),
+                        'disponible', TRUE,
+                        'aseguradora', v_origen,
+                        'id_original', v_record->>'id_original',
+                        'version_original', v_record->>'version_original',
+                        'confianza_score', best_match.score,
+                        'metodo_match', best_match.method,
+                        'tier', best_match.tier,
+                        'fecha_actualizacion', NOW()
+                    ), TRUE
+                ),
+                fecha_actualizacion = NOW()
+            WHERE id = best_match.id;
+
+            update_count := update_count + 1;
+            CASE best_match.tier
+                WHEN 1 THEN tier1_count := tier1_count + 1;
+                WHEN 2 THEN tier2_count := tier2_count + 1;
+                WHEN 3 THEN tier3_count := tier3_count + 1;
+            END CASE;
         ELSE
             IF v_origen = ANY(v_insurers_permitidos_crear) THEN
                 INSERT INTO catalogo_homologado (hash_comercial, marca, modelo, anio, transmision, version, version_tokens_array, disponibilidad)

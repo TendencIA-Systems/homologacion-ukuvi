@@ -5,9 +5,10 @@
 -- Total esperado: ~31,476 registros únicos
 -- =====================================================
 
-SELECT 
+SELECT
     'MAPFRE' as origen_aseguradora,
-    mo.CodModelo as id_original,
+    -- Format: {CodModelo}_{AnioFabrica} (e.g., "210_2020")
+    COALESCE(CONCAT(mo.CodModelo, '_', mo.AnioFabrica), mo.CodModelo) as id_original,
     m.NomMarca as marca,
     -- NomModelo contiene modelo + versión mezclados
     mo.NomModelo as modelo_version_completo,

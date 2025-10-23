@@ -70,8 +70,9 @@ Each normalization script must:
 - Generate `hash_comercial` (SHA-256 of marca|modelo|anio|transmision)
 - Generate `id_canonico` (SHA-256 of complete record including version)
 - Create integrated `version` field containing ALL technical specifications in a single string
-- Format: `[TRIM] [BODY] [POWER] [DISPLACEMENT] [CYLINDERS] [DOORS] [TRACTION]`
-- Example: `"ADVANCE SEDAN 145HP 2L 4CIL 4PUERTAS AWD"`
+- Format: `[TRIM] [BODY] [POWER] [DISPLACEMENT] [CYLINDERS] [DOORS] [OCCUPANTS] [TRACTION]`
+- Example: `"ADVANCE SEDAN 145HP 2L 4CIL 4PUERTAS 5OCUP AWD"`
+- Example: `"PRIME 190HP 1.5L 4CIL 5PUERTAS 5OCUP"`
 - Map transmission codes to standard values (MANUAL/AUTO/null)
 - Remove comfort/security features (AA, EE, CD, ABS, BA) from version strings
 - Convert door format from "4P" to "4PUERTAS"
@@ -233,7 +234,8 @@ ORDER BY token_count DESC;
 - Hash generation must be consistent across all insurers for proper grouping
 - Always preserve original data for audit and debugging purposes
 - The system handles missing/null values gracefully - avoid using default placeholders
-- Security features (ABS, BA) and occupant info (5OCUP) should be excluded from version normalization
+- **Version field MUST include:** TRIM, POWER (HP), DISPLACEMENT (L), CYLINDERS, DOORS (PUERTAS), OCCUPANTS (OCUP), and TRACTION
+- **Version field MUST exclude:** Security features (ABS, BA, QC, VP), comfort features (AA, EE, CD, DVD, GPS), and body type descriptors (SEDAN, SUV, COUPE, etc.)
 
 ## Implementation Patterns
 

@@ -1,0 +1,52 @@
+ETL VALIDATION ANALYSIS
+======================
+Date: Sat Oct 18 18:31:23 CST 2025
+
+Total Records: 29662
+
+ISSUE 1: Model Contamination
+============================
+SERIE prefix: 0
+SDRIVE/XDRIVE: 0
+Trailing I/IA: 0
+TURBO suffix: 16
+TOTAL CONTAMINATED: 16
+Status: PASS (acceptable)
+
+ISSUE 2: BMW/MINI Separation
+============================
+BMW with MINI: 0
+MINI brand records: 742
+Status: PASS
+
+ISSUE 3: Incomplete Models
+============================
+BMW single M: 0
+BMW single X: 0
+AUDI single S: 0
+AUDI single R: 0
+TOTAL SINGLES: 0
+Status: PASS
+
+ISSUE 4: MAPFRE IDs
+===================
+MAPFRE records found: 11956
+Status: INFO (presence check only)
+
+DATA QUALITY CHECKS
+===================
+Empty marca: 0
+Empty modelo: 0
+TOTAL QUALITY ISSUES: 0
+Status: PASS
+
+FINAL ASSESSMENT
+================
+Issue 1 (Contamination): 16 records
+Issue 2 (BMW/MINI): BMW=0 MINI=742
+Issue 3 (Singles): 0 records
+Issue 4 (MAPFRE): 11956 records found
+Data Quality: 0 issues
+
+Passing checks: 4/4
+OVERALL: PRODUCTION READY
