@@ -30,7 +30,8 @@ const MODELO_SPECS_TO_REMOVE = [
   "AMG",
   "SRT",
   "S-LINE",
-  "R-LINE",
+  // R-LINE removido - ahora protegido en PROTECTED_HYPHEN_TOKENS
+  // "R-LINE",
   "M-SPORT",
   "TYPE-R",
   "TYPE-S",
@@ -530,6 +531,16 @@ const PROTECTED_HYPHEN_TOKENS = [
     placeholder: "__BX_PROTECTED_S_LINE__",
     canonical: "S-LINE",
   },
+  {
+    regex: /\bR[\s-]?LINE\b/gi,
+    placeholder: "__BX_PROTECTED_R_LINE__",
+    canonical: "R-LINE",
+  },
+  {
+    regex: /\bX[\s-]?DRIVE\b/gi,
+    placeholder: "__BX_PROTECTED_X_DRIVE__",
+    canonical: "X-DRIVE",
+  },
 ];
 
 const NUMERIC_CONTEXT_TOKENS = new Set([
@@ -654,6 +665,120 @@ BX_NORMALIZATION_DICTIONARY.irrelevant_comfort_audio = Array.from(
     )
   )
 );
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROTECTED SPACE-SEPARATED TRIMS (BX - High STRONIC Volume)
+// ═══════════════════════════════════════════════════════════════════════════
+// BX has highest STRONIC count (581 occurrences) and diverse trim representation
+const PROTECTED_SPACED_TRIMS_BX = [
+  // M-series (universal)
+  "M SPORT",
+
+  // I-series Mazda
+  "I GRAND TOURING", // ⭐ CRITICAL - 751 cases across insurers
+  "I TOURING",
+  "I SPORT",
+  "I LUXURY",
+  "I PREMIUM",
+
+  // R-series Honda
+  "R GRAND TOURING",
+  "R TOURING",
+  "R SPORT",
+  "R LUXURY",
+
+  // S-series Mazda
+  "S GRAND TOURING", // ⭐ CRITICAL - 335 cases across insurers
+  "S TOURING",
+  "S SPORT",
+
+  // D-series (Diesel variants)
+  "D GRAND TOURING",
+  "D TOURING",
+
+  // Standalone trims (no letter prefix)
+  "GRAND TOURING", // ⭐ CRITICAL - 646 cases (standalone)
+  "GRAND TOURING PLUS",
+  "GRAND TOURING I", // BX-specific - 9 cases
+  "GRAND TOURING S", // BX-specific - 12 cases (also in El Potosí)
+
+  // Letter + PREMIUM
+  "A PREMIUM",
+  "L PREMIUM",
+  "C PREMIUM",
+  "E PREMIUM",
+
+
+  // 🔥 v2.13.0 ADDITIONS:
+  "MX GRAND TOURING",
+  "F SPORT",
+  "E SPORT",
+  "JOHN COOPER WORKS",
+  "COOPER WORKS",
+  "COOPER S",
+  "KING RANCH",
+  "EDDIE BAUER",
+  "HIGH COUNTRY",
+  "GRAND CHEROKEE",
+];
+
+/**
+ * Protect space-separated trims by replacing spaces with placeholder
+ * Handles multi-space variants (e.g., "M  SPORT", "M   SPORT")
+ */
+function protectTrims(version) {
+  if (!version) return version;
+  let protected = version;
+  PROTECTED_SPACED_TRIMS_BX.forEach((trim) => {
+    const placeholder = trim.replace(/\s+/g, "_SPACE_");
+    const pattern = trim.replace(/\s+/g, "\\s+");
+    protected = protected.replace(
+      new RegExp(`\\b${pattern}\\b`, "gi"),
+      placeholder
+    );
+  });
+  return protected;
+}
+
+/**
+ * Restore space-separated trims by replacing placeholder with space
+ */
+function restoreTrims(version) {
+  if (!version) return version;
+  return version.replace(/_SPACE_/g, " ");
+}
+
+/**
+ * Fixes concatenations where transmission tokens (AUT/STD/MAN) are stuck to trims
+ * Example: "I SPORTAUT" → "I SPORT AUT", "S GRAND TOURINGAUT" → "S GRAND TOURING AUT"
+ * Critical for El Potosí (16 concatenation cases) but added preventatively to all insurers
+ */
+function fixTrimConcatenations(version) {
+  if (!version) return version;
+
+  return (
+    version
+      // Mazda I-series concatenations (3-word patterns first)
+      .replace(
+        /\b(I\s+GRAND\s+TOURING)(AUT|STD|MAN|AUTOMATICA|ESTANDAR|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Mazda I-series concatenations (2-word patterns)
+      .replace(
+        /\b(I\s+(?:TOURING|SPORT|GT|LUXURY|PREMIUM))(AUT|STD|MAN|AUTOMATICA|ESTANDAR|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Mazda S-series concatenations (3-word patterns first)
+      .replace(/\b(S\s+GRAND\s+TOURING)(AUT|STD|MAN|TA|TM)\b/gi, "$1 $2")
+      // Mazda S-series concatenations (2-word patterns)
+      .replace(
+        /\b(S\s+(?:TOURING|SPORT|GT|HATCHBACK))(AUT|STD|MAN|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Other hyphenated trims concatenations
+      .replace(/\b([A-Z]-(?:SPEC|LINE|SPORT))(AUT|STD|MAN|TA|TM)\b/gi, "$1 $2")
+  );
+}
 
 function applyProtectedTokens(value = "") {
   let output = value;
@@ -896,7 +1021,18 @@ function cleanVersionString(versionString = "", model = "", brand = "") {
   cleaned = cleaned.replace(/[""''\"'\u201C\u201D\u2018\u2019]/g, " "); // All quote types
   cleaned = cleaned.replace(/"/g, " ");
 
+  // FIX: Remove concatenations BEFORE protecting trims
+  cleaned = fixTrimConcatenations(cleaned);
+
   cleaned = applyProtectedTokens(cleaned);
+
+  // 🔥 v2.13.0 FIX: Normalize multiple spaces BEFORE protecting trims
+  // This ensures that trim protection regex can match correctly
+  // Fixes: "I  SPORT" (double space) → "I SPORT" (single space) → protected correctly
+  cleaned = cleaned.replace(/\s+/g, ' ');
+
+  // STAGE 5: TRIM PROTECTION - Protect space-separated trims before hyphen removal
+  cleaned = protectTrims(cleaned);
   cleaned = cleaned.replace(
     BX_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
     "$1.$2"
@@ -990,6 +1126,8 @@ function cleanVersionString(versionString = "", model = "", brand = "") {
     " "
   );
   cleaned = restoreProtectedTokens(cleaned);
+  // STAGE 8: TRIM RESTORATION - Restore space-separated trims
+  cleaned = restoreTrims(cleaned);
   cleaned = cleaned.replace(
     BX_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
     " "

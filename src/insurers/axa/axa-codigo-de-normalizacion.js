@@ -30,7 +30,7 @@ const MODELO_SPECS_TO_REMOVE = [
   "AMG",
   "SRT",
   "S-LINE",
-  "R-LINE",
+  // "R-LINE", // R-LINE removido - ahora protegido en PROTECTED_HYPHEN_TOKENS
   "M-SPORT",
   "TYPE-R",
   "TYPE-S",
@@ -208,9 +208,9 @@ const AXA_NORMALIZATION_DICTIONARY = {
     "MULTITRONIC",
     "STEPTRONIC",
     "GEARTRONIC",
-    "STRONIC",      // Audi DSG transmission (289 occurrences in AXA)
-    "XTRONIC",      // Nissan CVT transmission (8 occurrences in AXA)
-    "X-TRONIC",     // Nissan CVT hyphenated variant (1 occurrence in AXA)
+    "STRONIC", // Audi DSG transmission (289 occurrences in AXA)
+    "XTRONIC", // Nissan CVT transmission (8 occurrences in AXA)
+    "X-TRONIC", // Nissan CVT hyphenated variant (1 occurrence in AXA)
     "SECUENCIAL",
     "DRIVELOGIC",
     "DUALOGIC",
@@ -307,9 +307,9 @@ const AXA_NORMALIZATION_DICTIONARY = {
     "S TRONIC": "AUTO",
     "S-TRONIC": "AUTO",
     "R TRONIC": "AUTO",
-    STRONIC: "AUTO",        // Audi DSG - for inference before removal
-    XTRONIC: "AUTO",        // Nissan CVT - for inference before removal
-    "X-TRONIC": "AUTO",     // Nissan CVT hyphenated - for inference before removal
+    STRONIC: "AUTO", // Audi DSG - for inference before removal
+    XTRONIC: "AUTO", // Nissan CVT - for inference before removal
+    "X-TRONIC": "AUTO", // Nissan CVT hyphenated - for inference before removal
     TIPTRONIC: "AUTO",
     TIPTRNIC: "AUTO",
     SELESPEED: "AUTO",
@@ -410,50 +410,83 @@ const PROTECTED_HYPHEN_TOKENS = [
     placeholder: "__PROTECTED_S_LINE__",
     canonical: "S-LINE",
   },
+  {
+    regex: /\bR[\s-]?LINE\b/gi,
+    placeholder: "__AXA_PROTECTED_R_LINE__",
+    canonical: "R-LINE",
+  },
+  {
+    regex: /\bX[\s-]?DRIVE\b/gi,
+    placeholder: "__AXA_PROTECTED_X_DRIVE__",
+    canonical: "X-DRIVE",
+  },
 ];
 
 /**
- * AXA-specific protected space-separated trims (19 unique trims)
+ * AXA-specific protected space-separated trims (28 unique trims)
  * These trims must be protected from being split during normalization
  * Based on actual data analysis - see CORRECTED-TRIM-LIST.md
  */
 const PROTECTED_SPACED_TRIMS_AXA = [
   // M-series (universal - present in ALL insurers)
-  'M SPORT',
+  "M SPORT",
 
   // I-series Mazda (AXA, Atlas, HDI, El Potosí, GNP, Zurich)
-  'I GRAND TOURING',  // ⭐ AXA-specific! 26 occurrences - explicitly requested
-  'I TOURING',
-  'I SPORT',
-  'I LUXURY',
+  "I GRAND TOURING", // ⭐ AXA-specific! 26 occurrences - explicitly requested
+  "I TOURING",
+  "I SPORT",
+  "I LUXURY",
+  "I PREMIUM",
 
   // R-series Honda (AXA, Chubb, El Potosí)
-  'R TOURING',
-  'R SPORT',
-  'R LUXURY',
+  "R GRAND TOURING",
+  "R TOURING",
+  "R SPORT",
+  "R LUXURY",
 
-  // S-series
-  'S SPORT',
+  // S-series Mazda
+  "S GRAND TOURING", // ⭐ CRITICAL - 335 cases across insurers
+  "S TOURING",
+  "S SPORT",
+
+  // D-series (Diesel variants)
+  "D GRAND TOURING",
+  "D TOURING",
+
+  // Standalone trims (no letter prefix)
+  "GRAND TOURING", // ⭐ CRITICAL - 646 cases (standalone)
+  "GRAND TOURING PLUS",
 
   // Letter + SPORT
-  'A SPORT',
-  'F SPORT',
-  'K SPORT',
-  'T SPORT',
+  "A SPORT",
+  "F SPORT",
+  "K SPORT",
+  "T SPORT",
 
   // Letter + LUXURY
-  'V LUXURY',
+  "V LUXURY",
 
   // Letter + PREMIUM
-  'E PREMIUM',
-  'C PREMIUM',
-  'L PREMIUM',
+  "E PREMIUM",
+  "C PREMIUM",
+  "L PREMIUM",
 
   // Letter + ELEGANCE
-  'K ELEGANCE',
+  "K ELEGANCE",
 
   // Other
-  'E SELECT',
+  "E SELECT",
+
+  // 🔥 v2.13.0 ADDITIONS:
+  "MX GRAND TOURING",
+  "E SPORT",
+  "JOHN COOPER WORKS",
+  "COOPER WORKS",
+  "COOPER S",
+  "KING RANCH",
+  "EDDIE BAUER",
+  "HIGH COUNTRY",
+  "GRAND CHEROKEE",
 ];
 
 const LEGITIMATE_TRIM_TOKENS = new Set([
@@ -523,11 +556,14 @@ function protectTrims(version) {
   // A-SPEC, TYPE-S, TYPE-R, etc.
 
   // Protect space-separated trims (with multi-space handling)
-  PROTECTED_SPACED_TRIMS_AXA.forEach(trim => {
-    const placeholder = trim.replace(/\s+/g, '_SPACE_');
+  PROTECTED_SPACED_TRIMS_AXA.forEach((trim) => {
+    const placeholder = trim.replace(/\s+/g, "_SPACE_");
     // Regex handles "M SPORT", "M  SPORT", "M   SPORT" (multiple spaces)
-    const pattern = trim.replace(/\s+/g, '\\s+');
-    protected = protected.replace(new RegExp(`\\b${pattern}\\b`, 'gi'), placeholder);
+    const pattern = trim.replace(/\s+/g, "\\s+");
+    protected = protected.replace(
+      new RegExp(`\\b${pattern}\\b`, "gi"),
+      placeholder
+    );
   });
 
   return protected;
@@ -538,7 +574,39 @@ function protectTrims(version) {
  */
 function restoreTrims(version) {
   if (!version) return version;
-  return version.replace(/_SPACE_/g, ' ');
+  return version.replace(/_SPACE_/g, " ");
+}
+
+/**
+ * Fixes concatenations where transmission tokens (AUT/STD/MAN) are stuck to trims
+ * Example: "I SPORTAUT" → "I SPORT AUT", "S GRAND TOURINGAUT" → "S GRAND TOURING AUT"
+ * Critical for El Potosí (16 concatenation cases) but added preventatively to all insurers
+ */
+function fixTrimConcatenations(version) {
+  if (!version) return version;
+
+  return (
+    version
+      // Mazda I-series concatenations (3-word patterns first)
+      .replace(
+        /\b(I\s+GRAND\s+TOURING)(AUT|STD|MAN|AUTOMATICA|ESTANDAR|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Mazda I-series concatenations (2-word patterns)
+      .replace(
+        /\b(I\s+(?:TOURING|SPORT|GT|LUXURY|PREMIUM))(AUT|STD|MAN|AUTOMATICA|ESTANDAR|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Mazda S-series concatenations (3-word patterns first)
+      .replace(/\b(S\s+GRAND\s+TOURING)(AUT|STD|MAN|TA|TM)\b/gi, "$1 $2")
+      // Mazda S-series concatenations (2-word patterns)
+      .replace(
+        /\b(S\s+(?:TOURING|SPORT|GT|HATCHBACK))(AUT|STD|MAN|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Other hyphenated trims concatenations
+      .replace(/\b([A-Z]-(?:SPEC|LINE|SPORT))(AUT|STD|MAN|TA|TM)\b/gi, "$1 $2")
+  );
 }
 
 function normalizeCylinders(versionString = "") {
@@ -760,8 +828,18 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   if (!versionString || typeof versionString !== "string") return "";
 
   let cleaned = versionString.toUpperCase().trim();
+
+  // FIX: Remove concatenations BEFORE protecting trims
+  cleaned = fixTrimConcatenations(cleaned);
+
   // STAGE 5: TRIM PROTECTION - protect hyphenated trims first
   cleaned = applyProtectedTokens(cleaned);
+
+  // 🔥 v2.13.0 FIX: Normalize multiple spaces BEFORE protecting trims
+  // This ensures that trim protection regex can match correctly
+  // Fixes: "I  SPORT" (double space) → "I SPORT" (single space) → protected correctly
+  cleaned = cleaned.replace(/\s+/g, " ");
+
   // STAGE 5: TRIM PROTECTION - protect space-separated trims
   cleaned = protectTrims(cleaned);
 
@@ -1033,7 +1111,10 @@ function processAxaRecord(record) {
   }
 
   // AXA-SPECIFIC: Filter out GENERICA placeholder records (STAGE 1)
-  if (record.version_original && record.version_original.toUpperCase().trim() === 'GENERICA') {
+  if (
+    record.version_original &&
+    record.version_original.toUpperCase().trim() === "GENERICA"
+  ) {
     throw new Error("Validation failed: GENERICA placeholder record");
   }
 

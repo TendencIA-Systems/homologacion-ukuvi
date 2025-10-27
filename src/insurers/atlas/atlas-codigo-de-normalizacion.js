@@ -30,7 +30,7 @@ const MODELO_SPECS_TO_REMOVE = [
   "AMG",
   "SRT",
   "S-LINE",
-  "R-LINE",
+  // "R-LINE", // R-LINE removido - ahora protegido en PROTECTED_HYPHEN_TOKENS
   "M-SPORT",
   "TYPE-R",
   "TYPE-S",
@@ -235,7 +235,7 @@ const ATLAS_NORMALIZATION_DICTIONARY = {
     "RUEDAS ALEACION",
     "RHYNE",
     "RHYNE SIZE",
-    // Transmisión (redundantes)
+    // Transmisión (redundantes) + Transmission specs for inference then removal
     "STD",
     "STD.",
     "STANDARD",
@@ -260,7 +260,9 @@ const ATLAS_NORMALIZATION_DICTIONARY = {
     "MULTITRONIC",
     "STEPTRONIC",
     "GEARTRONIC",
-    "STRONIC",
+    "STRONIC", // Audi DSG - for inference (33 occurrences in Atlas) then removal
+    "XTRONIC", // Nissan CVT - for inference then removal
+    "X-TRONIC", // Nissan CVT hyphenated - for inference then removal
     "SECUENCIAL",
     "DRIVELOGIC",
     "DUALOGIC",
@@ -467,6 +469,82 @@ const PROTECTED_HYPHEN_TOKENS = [
     placeholder: "__PROTECTED_S_LINE__",
     canonical: "S-LINE",
   },
+  {
+    regex: /\bR[\s-]?LINE\b/gi,
+    placeholder: "__PROTECTED_R_LINE__",
+    canonical: "R-LINE",
+  },
+  {
+    regex: /\bX[\s-]?DRIVE\b/gi,
+    placeholder: "__PROTECTED_X_DRIVE__",
+    canonical: "X-DRIVE",
+  },
+];
+
+/**
+ * Atlas-specific protected space-separated trims (11 unique trims)
+ * These trims must be protected from being split during normalization
+ * Based on actual data analysis - see CORRECTED-TRIM-LIST.md
+ * Note: Atlas has strong I-series Mazda presence
+ */
+const PROTECTED_SPACED_TRIMS_ATLAS = [
+  // M-series (universal - present in ALL insurers)
+  "M SPORT",
+
+  // I-series Mazda (CRÍTICO)
+  "I GRAND TOURING", // ⭐ CRITICAL - 751 cases across insurers
+  "I TOURING",
+  "I SPORT",
+  "I LUXURY",
+  "I PREMIUM",
+
+  // S-series Mazda
+  "S GRAND TOURING", // ⭐ CRITICAL - 335 cases across insurers
+  "S TOURING",
+  "S SPORT",
+
+  // R-series Mazda/Honda
+  "R GRAND TOURING",
+  "R TOURING",
+  "R SPORT",
+  "R LUXURY",
+
+  // D-series (Diesel variants - menos común)
+  "D GRAND TOURING",
+  "D TOURING",
+
+  // MX-series Mazda
+  "MX GRAND TOURING",
+
+  // Standalone (para casos sin prefijo)
+  "GRAND TOURING", // ⭐ CRITICAL - 646 cases (standalone)
+  "GRAND TOURING PLUS",
+
+  // Letter + SPORT
+  "A SPORT",
+  "X SPORT",
+  "E SPORT", // BMW
+
+  // F-series Lexus
+  "F SPORT",
+
+  // Letter + PREMIUM
+  "A PREMIUM",
+  "L PREMIUM",
+  "K PREMIUM",
+
+  // MINI Cooper variants
+  "JOHN COOPER WORKS",
+  "COOPER WORKS",
+  "COOPER S",
+
+  // Ford/Chevrolet pickup trims
+  "KING RANCH",
+  "EDDIE BAUER",
+  "HIGH COUNTRY",
+
+  // Jeep
+  "GRAND CHEROKEE",
 ];
 
 const ENGINE_ALIAS_PATTERNS = [
@@ -492,6 +570,70 @@ function restoreProtectedTokens(value = "") {
     output = output.replace(placeholderRegex, canonical);
   });
   return output;
+}
+
+/**
+ * Protects actual vehicle trim levels from being corrupted during normalization
+ * Atlas-specific: 11 unique trims with strong I-series Mazda presence
+ * Handles multi-space variants (e.g., "M  SPORT" with double/triple spaces)
+ */
+function protectTrims(version) {
+  if (!version) return version;
+
+  let protected = version;
+
+  // Protect space-separated trims (with multi-space handling)
+  PROTECTED_SPACED_TRIMS_ATLAS.forEach((trim) => {
+    const placeholder = trim.replace(/\s+/g, "_SPACE_");
+    // Regex handles "M SPORT", "M  SPORT", "M   SPORT" (multiple spaces)
+    const pattern = trim.replace(/\s+/g, "\\s+");
+    protected = protected.replace(
+      new RegExp(`\\b${pattern}\\b`, "gi"),
+      placeholder
+    );
+  });
+
+  return protected;
+}
+
+/**
+ * Restores protected trim levels to their canonical format
+ */
+function restoreTrims(version) {
+  if (!version) return version;
+  return version.replace(/_SPACE_/g, " ");
+}
+
+/**
+ * Fixes concatenations where transmission tokens (AUT/STD/MAN) are stuck to trims
+ * Example: "I SPORTAUT" → "I SPORT AUT", "S GRAND TOURINGAUT" → "S GRAND TOURING AUT"
+ * Critical for El Potosí (16 concatenation cases) but added preventatively to all insurers
+ */
+function fixTrimConcatenations(version) {
+  if (!version) return version;
+
+  return (
+    version
+      // Mazda I-series concatenations (3-word patterns first)
+      .replace(
+        /\b(I\s+GRAND\s+TOURING)(AUT|STD|MAN|AUTOMATICA|ESTANDAR|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Mazda I-series concatenations (2-word patterns)
+      .replace(
+        /\b(I\s+(?:TOURING|SPORT|GT|LUXURY|PREMIUM))(AUT|STD|MAN|AUTOMATICA|ESTANDAR|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Mazda S-series concatenations (3-word patterns first)
+      .replace(/\b(S\s+GRAND\s+TOURING)(AUT|STD|MAN|TA|TM)\b/gi, "$1 $2")
+      // Mazda S-series concatenations (2-word patterns)
+      .replace(
+        /\b(S\s+(?:TOURING|SPORT|GT|HATCHBACK))(AUT|STD|MAN|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Other hyphenated trims concatenations
+      .replace(/\b([A-Z]-(?:SPEC|LINE|SPORT))(AUT|STD|MAN|TA|TM)\b/gi, "$1 $2")
+  );
 }
 
 function normalizeStandaloneLiters(value = "") {
@@ -912,7 +1054,21 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   cleaned = cleaned.replace(/(\d+)HP([A-Z])/gi, "$1HP $2");
 
   cleaned = cleaned.replace(/AUT(?=[A-Z0-9])/g, "AUT ");
+
+  // FIX: Remove concatenations BEFORE protecting trims
+  cleaned = fixTrimConcatenations(cleaned);
+
+  // STAGE 5: TRIM PROTECTION - protect hyphenated trims first
   cleaned = applyProtectedTokens(cleaned);
+
+  // 🔥 v2.13.0 FIX: Normalize multiple spaces BEFORE protecting trims
+  // This ensures that trim protection regex can match correctly
+  // Fixes: "I  SPORT" (double space) → "I SPORT" (single space) → protected correctly
+  cleaned = cleaned.replace(/\s+/g, " ");
+
+  // STAGE 5: TRIM PROTECTION - protect space-separated trims
+  cleaned = protectTrims(cleaned);
+
   cleaned = cleaned.replace(/\bRA-?(\d+)\b/g, "R$1");
   cleaned = cleaned.replace(/[\/,]/g, " ");
   cleaned = cleaned.replace(/-/g, " ");
@@ -988,7 +1144,11 @@ function cleanVersionString(versionString = "", model = "", marca = "") {
   cleaned = cleaned.replace(multiple_spaces, " ");
   cleaned = cleaned.replace(trim_spaces, "");
 
+  // STAGE 8: TRIM RESTORATION - restore hyphenated trims first
   cleaned = restoreProtectedTokens(cleaned);
+  // STAGE 8: TRIM RESTORATION - restore space-separated trims
+  cleaned = restoreTrims(cleaned);
+
   cleaned = cleaned.replace(/CIL(?=\d)/g, "CIL ");
   cleaned = cleaned.replace(/\b(\d+(?:\.\d+)?)\s*HP\b/g, "$1HP");
   cleaned = cleaned.replace(/\s+/g, " ").trim();

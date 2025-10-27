@@ -29,7 +29,8 @@ const MODELO_SPECS_TO_REMOVE = [
   "AMG",
   "SRT",
   "S-LINE",
-  "R-LINE",
+  // R-LINE removido - ahora protegido en PROTECTED_HYPHEN_TOKENS
+  // "R-LINE",
   "M-SPORT",
   "TYPE-R",
   "TYPE-S",
@@ -237,6 +238,7 @@ const HDI_NORMALIZATION_DICTIONARY = {
     "A/C",
     "AC",
     "CE",
+    "CP", // HDI-specific addition
     "SQ",
     "CB",
     "CQ",
@@ -276,7 +278,7 @@ const HDI_NORMALIZATION_DICTIONARY = {
     "RUEDAS ALEACION",
     "RHYNE",
     "RHYNE SIZE",
-    // Transmisión (redundantes)
+    // Transmisión (redundantes) + Transmission specs for inference then removal
     "STD",
     "STD.",
     "STANDARD",
@@ -300,7 +302,9 @@ const HDI_NORMALIZATION_DICTIONARY = {
     "MULTITRONIC",
     "STEPTRONIC",
     "GEARTRONIC",
-    "STRONIC",
+    "STRONIC", // Audi DSG - for inference (118 occurrences in HDI) then removal
+    "XTRONIC", // Nissan CVT - for inference then removal
+    "X-TRONIC", // Nissan CVT hyphenated - for inference then removal
     "SECUENCIAL",
     "DRIVELOGIC",
     "DUALOGIC",
@@ -436,6 +440,72 @@ const PROTECTED_HYPHEN_TOKENS = [
     placeholder: "__HDI_PROTECTED_S_LINE__",
     canonical: "S-LINE",
   },
+  {
+    regex: /\bR[\s-]?LINE\b/gi,
+    placeholder: "__HDI_PROTECTED_R_LINE__",
+    canonical: "R-LINE",
+  },
+  {
+    regex: /\bX[\s-]?DRIVE\b/gi,
+    placeholder: "__HDI_PROTECTED_X_DRIVE__",
+    canonical: "X-DRIVE",
+  },
+];
+
+/**
+ * HDI-specific protected space-separated trims (24 unique trims)
+ * These trims must be protected from being split during normalization
+ * Based on actual data analysis - see CORRECTED-TRIM-LIST.md
+ */
+const PROTECTED_SPACED_TRIMS_HDI = [
+  // M-series (universal - present in ALL insurers)
+  "M SPORT",
+
+  // I-series Mazda (HDI, AXA, Atlas, El Potosí, GNP, Zurich)
+  "I GRAND TOURING", // ⭐ CRITICAL - 751 cases across insurers
+  "I TOURING",
+  "I SPORT",
+  "I LUXURY",
+  "I PREMIUM",
+
+  // R-series Honda
+  "R GRAND TOURING",
+  "R TOURING",
+  "R SPORT",
+  "R LUXURY",
+
+  // S-series Mazda
+  "S GRAND TOURING", // ⭐ CRITICAL - 335 cases across insurers
+  "S TOURING",
+  "S SPORT",
+
+  // D-series (Diesel variants)
+  "D GRAND TOURING",
+  "D TOURING",
+
+  // Standalone trims (no letter prefix)
+  "GRAND TOURING", // ⭐ CRITICAL - 646 cases (standalone)
+  "GRAND TOURING PLUS",
+
+  // Letter + SPORT
+  "E SPORT",
+
+  // Letter + ELEGANCE
+  "F ELEGANCE",
+
+  // TYPE variants (already protected by PROTECTED_HYPHEN_TOKENS but listing for completeness)
+  // TYPE S (handled as hyphenated TYPE-S)
+
+  // 🔥 v2.13.0 ADDITIONS:
+  "MX GRAND TOURING",
+  "F SPORT",
+  "JOHN COOPER WORKS",
+  "COOPER WORKS",
+  "COOPER S",
+  "KING RANCH",
+  "EDDIE BAUER",
+  "HIGH COUNTRY",
+  "GRAND CHEROKEE",
 ];
 
 const NUMERIC_CONTEXT_TOKENS = new Set([
@@ -576,6 +646,70 @@ function restoreProtectedTokens(value = "") {
     output = output.replace(placeholderRegex, canonical);
   });
   return output;
+}
+
+/**
+ * Protects actual vehicle trim levels from being corrupted during normalization
+ * HDI-specific: 7 unique trims with multi-space handling
+ * Handles multi-space variants (e.g., "M  SPORT" with double/triple spaces)
+ */
+function protectTrims(version) {
+  if (!version) return version;
+
+  let protected = version;
+
+  // Protect space-separated trims (with multi-space handling)
+  PROTECTED_SPACED_TRIMS_HDI.forEach((trim) => {
+    const placeholder = trim.replace(/\s+/g, "_SPACE_");
+    // Regex handles "M SPORT", "M  SPORT", "M   SPORT" (multiple spaces)
+    const pattern = trim.replace(/\s+/g, "\\s+");
+    protected = protected.replace(
+      new RegExp(`\\b${pattern}\\b`, "gi"),
+      placeholder
+    );
+  });
+
+  return protected;
+}
+
+/**
+ * Restores protected trim levels to their canonical format
+ */
+function restoreTrims(version) {
+  if (!version) return version;
+  return version.replace(/_SPACE_/g, " ");
+}
+
+/**
+ * Fixes concatenations where transmission tokens (AUT/STD/MAN) are stuck to trims
+ * Example: "I SPORTAUT" → "I SPORT AUT", "S GRAND TOURINGAUT" → "S GRAND TOURING AUT"
+ * Critical for El Potosí (16 concatenation cases) but added preventatively to all insurers
+ */
+function fixTrimConcatenations(version) {
+  if (!version) return version;
+
+  return (
+    version
+      // Mazda I-series concatenations (3-word patterns first)
+      .replace(
+        /\b(I\s+GRAND\s+TOURING)(AUT|STD|MAN|AUTOMATICA|ESTANDAR|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Mazda I-series concatenations (2-word patterns)
+      .replace(
+        /\b(I\s+(?:TOURING|SPORT|GT|LUXURY|PREMIUM))(AUT|STD|MAN|AUTOMATICA|ESTANDAR|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Mazda S-series concatenations (3-word patterns first)
+      .replace(/\b(S\s+GRAND\s+TOURING)(AUT|STD|MAN|TA|TM)\b/gi, "$1 $2")
+      // Mazda S-series concatenations (2-word patterns)
+      .replace(
+        /\b(S\s+(?:TOURING|SPORT|GT|HATCHBACK))(AUT|STD|MAN|TA|TM)\b/gi,
+        "$1 $2"
+      )
+      // Other hyphenated trims concatenations
+      .replace(/\b([A-Z]-(?:SPEC|LINE|SPORT))(AUT|STD|MAN|TA|TM)\b/gi, "$1 $2")
+  );
 }
 
 function stripTokens(text = "", tokens = []) {
@@ -891,7 +1025,20 @@ function cleanVersionString(versionString = "", brand = "", model = "") {
     .replace(/"/g, " ")
     .trim();
 
+  // FIX: Remove concatenations BEFORE protecting trims
+  cleaned = fixTrimConcatenations(cleaned);
+
+  // STAGE 5: TRIM PROTECTION - protect hyphenated trims first
   cleaned = applyProtectedTokens(cleaned);
+
+  // 🔥 v2.13.0 FIX: Normalize multiple spaces BEFORE protecting trims
+  // This ensures that trim protection regex can match correctly
+  // Fixes: "I  SPORT" (double space) → "I SPORT" (single space) → protected correctly
+  cleaned = cleaned.replace(/\s+/g, " ");
+
+  // STAGE 5: TRIM PROTECTION - protect space-separated trims
+  cleaned = protectTrims(cleaned);
+
   cleaned = cleaned.replace(
     HDI_NORMALIZATION_DICTIONARY.regex_patterns.decimal_comma,
     "$1.$2"
@@ -978,7 +1125,11 @@ function cleanVersionString(versionString = "", brand = "", model = "") {
     HDI_NORMALIZATION_DICTIONARY.regex_patterns.stray_punctuation,
     " "
   );
+  // STAGE 8: TRIM RESTORATION - restore hyphenated trims first
   cleaned = restoreProtectedTokens(cleaned);
+  // STAGE 8: TRIM RESTORATION - restore space-separated trims
+  cleaned = restoreTrims(cleaned);
+
   cleaned = cleaned.replace(
     HDI_NORMALIZATION_DICTIONARY.regex_patterns.multiple_spaces,
     " "
